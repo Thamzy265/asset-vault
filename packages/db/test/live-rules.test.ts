@@ -4,7 +4,7 @@ import { sql, type Kysely } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb } from "../src/client.ts";
 import { migrateUp } from "../src/migrate.ts";
-import { normaliseDisplayName } from "../src/names.ts";
+import { normaliseDisplayName, normaliseRelationship } from "../src/names.ts";
 import { AUDIT_ACTIONS, IP_PREFIX_ACTIONS, VISIBILITIES } from "../src/rules.ts";
 import type { Database } from "../src/schema.ts";
 import { freshDatabase } from "./support/fresh-database.ts";
@@ -81,10 +81,12 @@ describe("live rules match the migrated database (review L6)", () => {
     }
   });
 
-  it("display names: the database accepts a value exactly when the repository would store it unchanged", async () => {
-    const expr = await checkExpression("people", "people_display_name_check");
-    // Every BMP code point (no surrogates, no NUL: Postgres text can't hold them) and the
-    // astral ranges the classes touch, alone, as a leading or trailing character, and inside a name.
+  /**
+   * Every BMP code point (no surrogates, no NUL: Postgres text can't hold them) and the
+   * astral ranges the classes touch, alone, as a leading or trailing character, and inside
+   * a value; plus the length boundaries.
+   */
+  function textCandidates(maxCodePoints: number): string[] {
     const codePoints: number[] = [];
     const add = (from: number, to: number) => {
       for (let cp = from; cp <= to; cp++) if (cp < 0xd800 || cp > 0xdfff) codePoints.push(cp);
@@ -97,10 +99,25 @@ describe("live rules match the migrated database (review L6)", () => {
       const ch = String.fromCodePoint(cp);
       return [ch, `${ch}a`, `a${ch}`, `a${ch}a`];
     });
-    values.push("a".repeat(100), "a".repeat(101), "\u{1f600}".repeat(100), "\u{1f600}".repeat(101));
+    for (const n of [maxCodePoints, maxCodePoints + 1]) values.push("a".repeat(n), "\u{1f600}".repeat(n));
+    return values;
+  }
+  const hex = (v: string) => [...v].map((c) => c.codePointAt(0)!.toString(16)).join(" ");
+
+  it("display names: the database accepts a value exactly when the repository would store it unchanged", async () => {
+    const expr = await checkExpression("people", "people_display_name_check");
+    const values = [...textCandidates(100), ""];
     const dbAccepts = await accepted(expr, "display_name", values);
     const mismatches = values.filter((v) => dbAccepts.has(v) !== (normaliseDisplayName(v) === v));
-    expect(mismatches.map((v) => [...v].map((c) => c.codePointAt(0)!.toString(16)).join(" ")).slice(0, 20)).toEqual([]);
+    expect(mismatches.map(hex).slice(0, 20)).toEqual([]);
+  });
+
+  it("relationship (review L1): the database accepts a value exactly when the repository would store it unchanged", async () => {
+    const expr = await checkExpression("people", "people_relationship_check");
+    const values = [...textCandidates(50), ""];
+    const dbAccepts = await accepted(expr, "relationship", values);
+    const mismatches = values.filter((v) => dbAccepts.has(v) !== (normaliseRelationship(v) === v));
+    expect(mismatches.map(hex).slice(0, 20)).toEqual([]);
   });
 });
 

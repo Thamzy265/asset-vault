@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BIDI_OVERRIDES_AND_ISOLATES, CONTROL_CHARACTERS, INVISIBLE_CHARACTERS, WHITE_SPACE } from "../src/rules.ts";
-import { normaliseDisplayName } from "../src/names.ts";
+import { normaliseDisplayName, normaliseRelationship } from "../src/names.ts";
 
 // M1.2 decision 6: names are trimmed of Unicode whitespace, then refused when
 // empty, blank (only whitespace or zero-width characters), holding control,
@@ -95,4 +95,34 @@ it("stays fast on long inputs (no regex backtracking): 1 MB of inner spaces is r
   expect(normaliseDisplayName(`a${" ".repeat(1_000_000)}b`)).toBeNull();
   expect(normaliseDisplayName(`${" ".repeat(1_000_000)}Jane${"\u3000".repeat(1_000_000)}`)).toBe("Jane");
   expect(performance.now() - started).toBeLessThan(1_000);
+});
+
+// Review L1: relationship is trimmed, 0-50 code points, no control or bidi
+// override/isolate characters and no lone surrogates (the same classes as names).
+describe("normaliseRelationship", () => {
+  it.each([
+    ["sister", "sister"],
+    ["  aunt \u3000", "aunt"],
+    ["", ""],
+    ["   ", ""],
+    ["r".repeat(50), "r".repeat(50)],
+    ["\u{1f46a}".repeat(50), "\u{1f46a}".repeat(50)],
+    ["\u05d0\u05d7\u05d5\u05ea", "\u05d0\u05d7\u05d5\u05ea"],
+  ])("accepts %j as %j", (raw, expected) => {
+    expect(normaliseRelationship(raw)).toBe(expected);
+  });
+
+  it.each([
+    ["51 letters", "r".repeat(51)],
+    ["51 emoji", "\u{1f46a}".repeat(51)],
+    ["tab inside", "a\tb"],
+    ["null byte", "a\u0000b"],
+    ["DEL", "a\u007fb"],
+    ["right-to-left override", "Ann\u202eabc"],
+    ["right-to-left isolate", "\u2067Ann"],
+    ["lone surrogate", "bad\ud800"],
+    ["1 MB", "x".repeat(1_000_000)],
+  ])("refuses %s", (_label, raw) => {
+    expect(normaliseRelationship(raw)).toBeNull();
+  });
 });

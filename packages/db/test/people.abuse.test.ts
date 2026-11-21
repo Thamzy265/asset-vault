@@ -315,9 +315,9 @@ describe("transaction integrity and concurrency", () => {
     expect(await auditCount()).toBe(before + 1); // the one view row of the get above
   });
 
-  it("an update that violates a DB check (relationship too long) in a multi-field change applies none of the fields", async () => {
+  it("an update with one invalid field (relationship too long) in a multi-field change applies none of the fields", async () => {
     const p = await people.create(carl, { displayName: "Atomic", relationship: "old", ownerPersonId: carl.personId });
-    await expect(people.update(carl, p.id, { displayName: "New name", relationship: "x".repeat(51) })).rejects.toMatchObject({ code: "23514" });
+    await expect(people.update(carl, p.id, { displayName: "New name", relationship: "x".repeat(51) })).rejects.toBeInstanceOf(ValidationError);
     expect(await people.get(carl, p.id)).toMatchObject({ displayName: "Atomic", relationship: "old" });
   });
 
@@ -486,12 +486,31 @@ describe("name and relationship inputs", () => {
     expect(await peopleCount()).toBeGreaterThan(0);
   });
 
-  it("relationship: 50 characters accepted, 51 refused, empty string accepted, emoji counted as characters", async () => {
+  // Review L1: refused by the repository with a ValidationError naming the field, before the
+  // database (whose 23514 error detail would carry the whole row, names included) is asked.
+  it("relationship: 50 characters accepted, 51 refused (ValidationError), empty string accepted, emoji counted as characters", async () => {
     expect((await make("R50", { relationship: "r".repeat(50) })).relationship).toHaveLength(50);
-    await expect(make("R51", { relationship: "r".repeat(51) })).rejects.toMatchObject({ code: "23514" });
+    const error = await make("Secretname R51", { relationship: "r".repeat(51) }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ValidationError);
+    expect((error as ValidationError).fields).toEqual(["relationship"]);
+    expect(JSON.stringify(error)).not.toContain("Secretname");
+    expect((error as Error).message).not.toContain("Secretname");
     expect((await make("R0", { relationship: "" })).relationship).toBe("");
     expect((await make("Rem", { relationship: "👪".repeat(50) })).relationship).toBe("👪".repeat(50));
-    await expect(make("Rem51", { relationship: "👪".repeat(51) })).rejects.toMatchObject({ code: "23514" });
+    await expect(make("Rem51", { relationship: "👪".repeat(51) })).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it("relationship: trimmed; control, bidi override/isolate characters and lone surrogates refused on create and update", async () => {
+    expect((await make("Rtrim", { relationship: "  aunt\u3000" })).relationship).toBe("aunt");
+    expect((await make("Rpad", { relationship: ` ${"r".repeat(50)} ` })).relationship).toHaveLength(50);
+    const target = await make("Rel target");
+    for (const relationship of ["a\tb", "a\u0007b", "a\u0085b", "Ann\u202eabc", "\u2066x\u2069", "bad\ud800"]) {
+      const created = await make("Rbad", { relationship }).catch((e: unknown) => e);
+      expect(created, JSON.stringify(relationship)).toBeInstanceOf(ValidationError);
+      expect((created as ValidationError).fields).toEqual(["relationship"]);
+      await expect(people.update(carl, target.id, { relationship }), JSON.stringify(relationship)).rejects.toBeInstanceOf(ValidationError);
+    }
+    await expect(people.update(carl, target.id, { relationship: " cousin " })).resolves.toMatchObject({ relationship: "cousin" });
   });
 
   it("an enormous name (1 MB) is refused, quickly, and writes nothing", async () => {
@@ -517,9 +536,9 @@ describe("name and relationship inputs", () => {
     expect(await peopleCount()).toBe(before);
   });
 
-  it("a person that fails the DB check leaves a clean audit trail: no create row for an id that does not exist", async () => {
+  it("a person refused for an invalid relationship leaves a clean audit trail: no create row for an id that does not exist", async () => {
     const before = await auditCount();
-    await expect(make("Valid", { relationship: "x".repeat(51) })).rejects.toMatchObject({ code: "23514" });
+    await expect(make("Valid", { relationship: "x".repeat(51) })).rejects.toBeInstanceOf(ValidationError);
     expect(await auditCount()).toBe(before);
   });
 

@@ -28,6 +28,7 @@ const BIDI_OVERRIDES_AND_ISOLATES: readonly CodePointRange[] = [
   [0x202a, 0x202e], [0x2066, 0x2069],
 ];
 const DISPLAY_NAME_MAX_CODE_POINTS = 100;
+const RELATIONSHIP_MAX_CODE_POINTS = 50;
 
 /** A Postgres regex bracket body for the ranges. NUL is left out: Postgres text can't hold it. */
 function pgClass(...sets: ReadonlyArray<readonly CodePointRange[]>): string {
@@ -52,6 +53,19 @@ function displayNameCheck(): RawBuilder<unknown> {
     and display_name !~ ${sql.lit(`[${space}]$`)}
     and display_name !~ ${sql.lit(`[${forbidden}]`)}
     and display_name ~ ${sql.lit(`[^${blank}]`)}`;
+}
+
+/**
+ * The database side of the relationship rule (review L1): trimmed, at most 50
+ * code points, no control or bidi override/isolate characters. Blank is allowed.
+ */
+function relationshipCheck(): RawBuilder<unknown> {
+  const space = pgClass(WHITE_SPACE);
+  const forbidden = pgClass(CONTROL_CHARACTERS, BIDI_OVERRIDES_AND_ISOLATES);
+  return sql`char_length(relationship) <= ${sql.lit(RELATIONSHIP_MAX_CODE_POINTS)}
+    and relationship !~ ${sql.lit(`^[${space}]`)}
+    and relationship !~ ${sql.lit(`[${space}]$`)}
+    and relationship !~ ${sql.lit(`[${forbidden}]`)}`;
 }
 
 /**
@@ -90,7 +104,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .addColumn("display_name", "text", (c) =>
       c.notNull().check(displayNameCheck()),
     )
-    .addColumn("relationship", "text", (c) => c.check(sql`char_length(relationship) <= 50`))
+    .addColumn("relationship", "text", (c) => c.check(relationshipCheck()))
     .execute();
   await addUpdatedAtTrigger(db, "people");
 

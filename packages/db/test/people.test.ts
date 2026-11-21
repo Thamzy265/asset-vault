@@ -201,10 +201,14 @@ describe("writes and their audit rows (AC4)", () => {
     expect((await people.get(bea, p.id)).displayName).toBe("Stays");
   });
 
-  it("a failed insert (over-length relationship, refused by the database) leaves no person and no audit row", async () => {
+  it("a refused insert (over-length relationship, ValidationError) leaves no person and no audit row", async () => {
     const audits = (await auditRows()).length;
-    await expect(people.create(bea, { displayName: "Valid", relationship: "x".repeat(51), ownerPersonId: bea.personId })).rejects.toMatchObject({ code: "23514" });
+    const people0 = await db.selectFrom("people").select(sql<string>`count(*)`.as("n")).executeTakeFirstOrThrow();
+    const error = await people.create(bea, { displayName: "Valid", relationship: "x".repeat(51), ownerPersonId: bea.personId }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ValidationError);
+    expect((error as ValidationError).fields).toEqual(["relationship"]);
     expect((await auditRows()).length).toBe(audits);
+    expect(await db.selectFrom("people").select(sql<string>`count(*)`.as("n")).executeTakeFirstOrThrow()).toEqual(people0);
   });
 });
 
@@ -333,6 +337,19 @@ describe("name rules (decision 6, B1)", () => {
     }
     for (const name of stored) {
       await expect(sql`insert into people (display_name) values (${name})`.execute(db), JSON.stringify(name)).resolves.toBeDefined();
+    }
+  });
+
+  it("relationship (review L1): the database check refuses what the repository refuses, and untrimmed values", async () => {
+    for (const relationship of ["r".repeat(51), "\u{1f46a}".repeat(51), " aunt", "aunt ", "\u3000aunt", "a\tb", "a\u007fb", "Ann\u202eabc", "\u2067x"]) {
+      const result = await sql`insert into people (display_name, relationship) values ('R', ${relationship})`.execute(db).then(
+        () => "ok",
+        (e: { code?: string }) => e.code,
+      );
+      expect(result, JSON.stringify(relationship)).toBe("23514");
+    }
+    for (const relationship of [null, "", "aunt", "r".repeat(50), "\u{1f46a}".repeat(50), "a b"]) {
+      await expect(sql`insert into people (display_name, relationship) values ('R', ${relationship})`.execute(db), JSON.stringify(relationship)).resolves.toBeDefined();
     }
   });
 

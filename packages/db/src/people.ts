@@ -19,7 +19,7 @@ import {
 } from "./access.ts";
 import { kyselyOf, type DbLike } from "./handle.ts";
 import { errorCode } from "./log.ts";
-import { normaliseDisplayName } from "./names.ts";
+import { normaliseDisplayName, normaliseRelationship } from "./names.ts";
 import { VISIBILITIES } from "./rules.ts";
 import type { Database, PeopleTable, Visibility } from "./schema.ts";
 
@@ -49,7 +49,8 @@ export type PersonChanges = Partial<NewPerson>;
 /**
  * Runtime shape of the inputs (B2): wrong types and unknown fields are refused
  * with ValidationError; an explicit visibility must be one of the enum, never
- * defaulted (B5); the display name is trimmed and checked (decision 6). Owner
+ * defaulted (B5); the display name (decision 6) and the relationship (review
+ * L1) are trimmed and checked. Owner
  * ids are checked separately: a malformed one is not-found, like any id.
  */
 const displayNameSchema = z.string().transform((raw, ctx) => {
@@ -60,9 +61,18 @@ const displayNameSchema = z.string().transform((raw, ctx) => {
   }
   return name;
 });
+/** Review L1: refused here, so the database's error (whose detail holds the whole row) is never reached. */
+const relationshipSchema = z.string().transform((raw, ctx) => {
+  const relationship = normaliseRelationship(raw);
+  if (relationship === null) {
+    ctx.addIssue({ code: "custom", message: "invalid relationship" });
+    return z.NEVER;
+  }
+  return relationship;
+});
 const newPersonSchema = z.strictObject({
   displayName: displayNameSchema,
-  relationship: z.string().nullable().optional(),
+  relationship: relationshipSchema.nullable().optional(),
   ownerPersonId: z.string().nullable().optional(),
   visibility: z.enum(VISIBILITIES).optional(),
 });

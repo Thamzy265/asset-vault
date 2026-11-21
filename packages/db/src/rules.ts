@@ -53,3 +53,5 @@ export const BIDI_OVERRIDES_AND_ISOLATES: readonly CodePointRange[] = [
   [0x202a, 0x202e], [0x2066, 0x2069],
 ];
 export const DISPLAY_NAME_MAX_CODE_POINTS = 100;
+/** Relationship (review L1): trimmed, 0-50 code points, no control or bidi override/isolate characters. */
+export const RELATIONSHIP_MAX_CODE_POINTS = 50;

@@ -113,6 +113,7 @@ describe("bad inserts fail at the database (AC3)", () => {
     await fails(sql`insert into people (display_name) values ('')`, "23514");
     await fails(sql`insert into people (display_name) values ('   ')`, "23514");
     await fails(sql`insert into people (display_name, relationship) values ('A', ${"x".repeat(51)})`, "23514");
+    await fails(sql`insert into people (display_name, relationship) values ('A', ' aunt')`, "23514");
     await expect(newPerson("x".repeat(100))).resolves.toBeTypeOf("string");
     await expect(run(sql`insert into people (display_name, relationship) values ('A', ${"x".repeat(50)})`)).resolves.toBeDefined();
   });

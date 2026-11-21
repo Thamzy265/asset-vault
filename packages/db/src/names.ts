@@ -3,6 +3,7 @@ import {
   CONTROL_CHARACTERS,
   DISPLAY_NAME_MAX_CODE_POINTS,
   INVISIBLE_CHARACTERS,
+  RELATIONSHIP_MAX_CODE_POINTS,
   WHITE_SPACE,
   type CodePointRange,
 } from "./rules.ts";
@@ -33,6 +34,19 @@ export function normaliseDisplayName(raw: string): string | null {
   if (FORBIDDEN.test(name) || !VISIBLE.test(name)) return null;
   const codePoints = [...name].length;
   return codePoints >= 1 && codePoints <= DISPLAY_NAME_MAX_CODE_POINTS ? name : null;
+}
+
+/**
+ * Relationship rules (review L1): the same trimming and the same refused
+ * characters as display names, but blank is allowed and the length is 0-50
+ * code points. Returns null (refused). The database check in migration 0002
+ * matches.
+ */
+export function normaliseRelationship(raw: string): string | null {
+  if (!raw.isWellFormed()) return null;
+  const relationship = trimSpace(raw);
+  if (FORBIDDEN.test(relationship)) return null;
+  return [...relationship].length <= RELATIONSHIP_MAX_CODE_POINTS ? relationship : null;
 }
 
 /** Trims WHITE_SPACE from both ends in one linear pass (a `[ ]+$` regex backtracks on long inner runs). */
