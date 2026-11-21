@@ -4,7 +4,7 @@ import "./fresh-database.ts";
 
 // Same image as docker-compose.yml. Set TEST_DATABASE_URL to use an existing
 // throwaway server instead of starting a container.
-export const POSTGRES_IMAGE = "postgres:18-alpine";
+export const POSTGRES_IMAGE = "postgres:18.7-alpine3.24";
 
 let container: StartedPostgreSqlContainer | undefined;
 

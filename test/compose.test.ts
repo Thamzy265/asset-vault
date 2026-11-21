@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,6 +25,10 @@ type Service = {
   depends_on?: Record<string, { condition: string }>;
   healthcheck?: unknown;
   restart?: string;
+  image?: string;
+  init?: boolean;
+  security_opt?: string[];
+  cap_drop?: string[];
 };
 
 async function config(env: Record<string, string>): Promise<{ services: Record<string, Service> }> {
@@ -106,5 +110,40 @@ describe("docker-compose.yml trust boundaries (tester)", () => {
       expect(services[name]?.restart).toBe("unless-stopped");
       expect(services[name]?.healthcheck).toBeDefined();
     }
+  });
+});
+
+describe("container hardening and pinned base images (reviewer L5)", () => {
+  it("web and worker run with an init process, no new privileges and no Linux capabilities", async () => {
+    const { services } = await config({ POSTGRES_PASSWORD: "pw12345" });
+    for (const name of ["web", "worker"]) {
+      expect(services[name]?.init, name).toBe(true);
+      expect(services[name]?.security_opt, name).toContain("no-new-privileges:true");
+      expect(services[name]?.cap_drop, name).toEqual(["ALL"]);
+    }
+  });
+
+  it("Postgres keeps the capabilities its entrypoint needs to drop to the postgres user", async () => {
+    const { services } = await config({ POSTGRES_PASSWORD: "pw12345" });
+    expect(services.postgres?.cap_drop ?? []).not.toContain("ALL");
+  });
+
+  it("pins Postgres to a minor version and Alpine release, and the DB tests use the same image", async () => {
+    const { services } = await config({ POSTGRES_PASSWORD: "pw12345" });
+    expect(services.postgres?.image).toMatch(/^postgres:\d+\.\d+-alpine\d+\.\d+$/);
+    const setup = readFileSync(path.join(repo, "packages/db/test/support/global-setup.ts"), "utf8");
+    expect(setup).toContain(`POSTGRES_IMAGE = "${services.postgres?.image}"`);
+  });
+
+  it.each(["apps/web/Dockerfile", "apps/worker/Dockerfile"])("%s pins every base image to a patch version and Alpine release", (file) => {
+    const froms = [...readFileSync(path.join(repo, file), "utf8").matchAll(/^FROM\s+(\S+)/gm)].map((m) => m[1]);
+    expect(froms.length).toBeGreaterThan(0);
+    for (const image of froms) expect(image).toMatch(/^node:\d+\.\d+\.\d+-alpine\d+\.\d+$/);
+  });
+
+  it("the web image copies its app files root-owned (no --chown), so the runtime user can't change them", () => {
+    const dockerfile = readFileSync(path.join(repo, "apps/web/Dockerfile"), "utf8");
+    expect(dockerfile).not.toMatch(/--chown/);
+    expect(dockerfile).toMatch(/^USER node$/m);
   });
 });
