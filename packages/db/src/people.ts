@@ -130,7 +130,8 @@ const RESTRICT_VIOLATION = "23001";
  * person, also the user linked to that person) and admins; members create
  * records owned by themselves only. A refused change to a visible record is a
  * ForbiddenError; a hidden record is always not-found. Changes write their
- * audit row in the same transaction, reads write a best-effort view row.
+ * audit row in the same transaction, reads (and an update that changes
+ * nothing, since it returns the record) write a best-effort view row.
  */
 export function peopleRepository(handle: DbLike, options: RepositoryOptions = {}) {
   const db = kyselyOf(handle);
@@ -203,7 +204,7 @@ export function peopleRepository(handle: DbLike, options: RepositoryOptions = {}
       const v = checkViewer(viewer);
       const personId = checkId(id);
       const changes = withCheckedOwner(parseInput(personChangesSchema, personChanges));
-      return db.transaction().execute(async (trx) => {
+      const result = await db.transaction().execute(async (trx) => {
         const current = await trx
           .selectFrom("people")
           .selectAll()
@@ -217,7 +218,7 @@ export function peopleRepository(handle: DbLike, options: RepositoryOptions = {}
         const changed: PersonColumns = Object.fromEntries(
           Object.entries(given).filter(([column, value]) => current[column as keyof PersonColumns] !== value),
         );
-        if (Object.keys(changed).length === 0) return toPerson(current);
+        if (Object.keys(changed).length === 0) return { person: toPerson(current), viewed: true };
         if (!canEdit(v, "people", current)) throw new ForbiddenError();
         if (("owner_person_id" in changed || "visibility" in changed) && !canManage(v, "people", current)) throw new ForbiddenError();
         if ("owner_person_id" in changed) await assertOwnerVisible(trx, v, changed.owner_person_id);
@@ -229,8 +230,11 @@ export function peopleRepository(handle: DbLike, options: RepositoryOptions = {}
           .returningAll()
           .executeTakeFirstOrThrow();
         await auditChange(trx, v, "update", ENTITY, row.id, Object.keys(changed));
-        return toPerson(row);
+        return { person: toPerson(row), viewed: false };
       });
+      // Review L2: a no-op still hands the record back, so it is audited as a view, like get().
+      if (result.viewed) await auditViews(db, log, v, ENTITY, [result.person.id]);
+      return result.person;
     },
 
     /** Refused with PersonInUseError while the person owns records or is linked to a login. */

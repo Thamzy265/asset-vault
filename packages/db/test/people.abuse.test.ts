@@ -278,28 +278,36 @@ describe("forged or stale viewer (the repository trusts the session; what happen
 });
 
 describe("transaction integrity and concurrency", () => {
-  it("an update that changes nothing writes no audit row, does not move updated_at, and is not charged to the viewer", async () => {
+  const viewRows = (entityId: string) => db.selectFrom("audit_log").select(["action", "actor_user_id"]).where("entity_id", "=", entityId).where("action", "=", "view").execute();
+
+  // Review L2: a no-op update still returns the record, so it writes one view row (like get), never an update row.
+  it("an update that changes nothing writes one view row and no update row, does not move updated_at, and is not charged to the viewer", async () => {
     const p = await people.create(admin, { displayName: "Same", relationship: "x" });
     const before = await auditCount();
     const again = await people.update(carl, p.id, { displayName: "Same", relationship: "x", visibility: "family", ownerPersonId: null });
     expect(again.updatedAt).toEqual(p.updatedAt);
     expect(again.updatedByUserId).toBe(admin.userId);
-    expect(await auditCount()).toBe(before);
+    expect(await auditCount()).toBe(before + 1);
+    expect(await viewRows(p.id)).toEqual([{ action: "view", actor_user_id: carl.userId }]);
   });
 
-  it("an empty change set writes nothing and returns the person", async () => {
+  it("an empty change set writes one view row per call and returns the person", async () => {
     const p = await people.create(bea, { displayName: "Empty change", ownerPersonId: bea.personId });
     const before = await auditCount();
     await expect(people.update(bea, p.id, {})).resolves.toMatchObject({ id: p.id });
     await expect(people.update(bea, p.id, { displayName: undefined } as never)).resolves.toMatchObject({ id: p.id });
-    expect(await auditCount()).toBe(before);
+    expect(await auditCount()).toBe(before + 2);
+    expect(await viewRows(p.id)).toEqual([
+      { action: "view", actor_user_id: bea.userId },
+      { action: "view", actor_user_id: bea.userId },
+    ]);
   });
 
-  it("setting relationship to null on a person that has none is a no-op, but clearing a real one is an update that names only that field", async () => {
+  it("setting relationship to null on a person that has none is a no-op (one view row), but clearing a real one is an update that names only that field", async () => {
     const p = await people.create(bea, { displayName: "Rel", ownerPersonId: bea.personId });
     const a = await auditCount();
     await people.update(bea, p.id, { relationship: null });
-    expect(await auditCount()).toBe(a);
+    expect(await auditCount()).toBe(a + 1);
     await people.update(bea, p.id, { relationship: "sister" });
     await people.update(bea, p.id, { relationship: null });
     const rows = await db.selectFrom("audit_log").select("details").where("entity_id", "=", p.id).where("action", "=", "update").orderBy("id").execute();
@@ -397,7 +405,7 @@ describe("transaction integrity and concurrency", () => {
     const child = await people.create(admin, { displayName: "Child for case", ownerPersonId: owner.id });
     const before = await auditCount();
     await people.update(carl, child.id, { ownerPersonId: owner.id.toUpperCase() });
-    expect(await auditCount()).toBe(before);
+    expect(await auditCount()).toBe(before + 1); // the no-op's view row (review L2), no update row
   });
 });
 

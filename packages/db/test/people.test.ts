@@ -158,10 +158,14 @@ describe("writes and their audit rows (AC4)", () => {
     expect(JSON.stringify(await auditRows(p.id))).not.toMatch(/Oldname|Newname|aunt/);
   });
 
-  it("an update that changes nothing writes nothing", async () => {
+  // Review L2: the record is still returned, so the read is audited like get().
+  it("an update that changes nothing writes no update row, only one view row", async () => {
     const p = await people.create(bea, { displayName: "Same", ownerPersonId: bea.personId });
-    await people.update(bea, p.id, { displayName: "Same" });
-    expect((await auditRows(p.id)).map((r) => r.action)).toEqual(["create"]);
+    await people.update(carl, p.id, { displayName: "Same" });
+    expect((await auditRows(p.id)).map((r) => [r.action, r.actor_user_id, r.details])).toEqual([
+      ["create", bea.userId, { fields: ["display_name", "owner_person_id"] }],
+      ["view", carl.userId, null],
+    ]);
   });
 
   it("delete removes the person and writes a delete row", async () => {
@@ -299,7 +303,8 @@ describe("input checks at the repository boundary (B2, B4, B5)", () => {
     expect(child.createdByUserId).toBe(admin.userId);
     const before = (await auditRows(child.id)).length;
     await people.update(upperViewer, child.id.toUpperCase(), { ownerPersonId: owner.id.toUpperCase() });
-    expect((await auditRows(child.id)).length).toBe(before);
+    // A no-op: no update row, only its view row (review L2), charged to the lowercase user id.
+    expect((await auditRows(child.id)).slice(before).map((r) => [r.action, r.actor_user_id])).toEqual([["view", admin.userId]]);
     const privateOfBea = await people.create(admin, { displayName: "Case private", ownerPersonId: bea.personId, visibility: "private" });
     const upperBea: Viewer = { ...bea, userId: bea.userId.toUpperCase(), personId: bea.personId!.toUpperCase() };
     await expect(people.get(upperBea, privateOfBea.id.toUpperCase())).resolves.toMatchObject({ id: privateOfBea.id });
