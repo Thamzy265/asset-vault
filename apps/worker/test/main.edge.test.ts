@@ -24,6 +24,7 @@ describe.each([
     ["empty", ""],
     ["not a URL", `garbage-${SECRET}`],
     ["wrong scheme", `mysql://vault:${SECRET}@host/db`],
+    ["non-numeric port (M1.1-T1)", `postgres://vault:${SECRET}@host:notaport/db`],
   ])("exits 1 immediately, names DATABASE_URL, never prints the value (%s)", async (_label, value) => {
     const started = Date.now();
     const result = await exec(script, args, { DATABASE_URL: value });

@@ -48,12 +48,10 @@ describe("loadDbConfig edge cases", () => {
     expect(loadDbConfig({ DATABASE_URL: "postgresql://u:p@h/d" }).databaseUrl).toBe("postgresql://u:p@h/d");
   });
 
-  // BUG M1.1-T1: the check is only a regex on the scheme, so a URL that cannot be
-  // parsed passes "validation at start" and only fails later (TypeError: Invalid URL
-  // from pg), keeping the app in a 60 s retry loop instead of failing fast.
-  // `it.fails` keeps the suite green while the bug is open; it flips to a failure
-  // (telling the developer to remove `.fails`) once validation is fixed.
-  it.fails.each([
+  // Regression M1.1-T1: a URL that cannot be parsed used to pass "validation at
+  // start" and only fail later (TypeError: Invalid URL from pg), keeping the app in
+  // a 60 s retry loop instead of failing fast.
+  it.each([
     ["non-numeric port", `postgres://vault:${SECRET}@host:notaport/db`],
     ["credentials but no host", `postgres://vault:${SECRET}@`],
   ])("rejects an unparseable URL at start (%s)", (_label, value) => {
