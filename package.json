@@ -8,7 +8,7 @@
   },
   "scripts": {
     "lint": "eslint .",
-    "typecheck": "pnpm -r --parallel typecheck",
+    "typecheck": "pnpm -r --parallel typecheck && tsc -p tsconfig.json",
     "test": "vitest run",
     "secrets": "secretlint \"**/*\"",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm secrets",
