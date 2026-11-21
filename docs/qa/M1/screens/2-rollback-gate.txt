@@ -1,0 +1,31 @@
+=== Rollback with web running (criterion 5) ===
+$ curl -si /api/v1/health (before)
+HTTP/1.1 200 OK
+{"status":"ok","db":"ok","version":"0.1.0","schema":{"expected":"0004_database_roles","applied":"0004_database_roles"},"workerHeartbeat":"2026-11-21T13:27:19.462Z"}$ docker compose stop worker
+ Container qa-m12-worker-1 Stopped 
+$ docker compose run --rm --no-deps migrate node packages/db/src/cli.ts down
+ Container qa-m12-migrate-run-82db0ff7906f Creating 
+ Container qa-m12-migrate-run-82db0ff7906f Created 
+{"time":"2026-11-21T13:27:26.207Z","level":"info","msg":"migration reverted","migrations":["0004_database_roles"]}
+$ curl -si /api/v1/health (schema one step behind)
+HTTP/1.1 503 Service Unavailable
+{"status":"error","db":"ok","version":"0.1.0","schema":{"expected":"0004_database_roles","applied":null},"workerHeartbeat":null}$ docker compose run --rm --no-deps migrate   (up)
+ Container qa-m12-migrate-run-75204d61227b Created 
+{"time":"2026-11-21T13:27:34.718Z","level":"info","msg":"migrations applied","migrations":["0004_database_roles"]}
+$ curl -si /api/v1/health
+HTTP/1.1 200 OK
+{"status":"ok","db":"ok","version":"0.1.0","schema":{"expected":"0004_database_roles","applied":"0004_database_roles"},"workerHeartbeat":"2026-11-21T13:27:19.462Z"}
+$ docker compose up -d --wait worker
+ Container qa-m12-migrate-1 Exited 
+ Container qa-m12-worker-1 Healthy 
+$ curl -si /api/v1/health (worker back)
+HTTP/1.1 200 OK
+{"status":"ok","db":"ok","version":"0.1.0","schema":{"expected":"0004_database_roles","applied":"0004_database_roles"},"workerHeartbeat":"2026-11-21T13:27:19.462Z"}
+--- second up applies nothing:
+{"time":"2026-11-21T13:27:50.101Z","level":"info","msg":"migrations applied","migrations":[]}
+--- full rollback of the 0004 step then down of 0003 refused while audit_log has rows (expected):
+ Container qa-m12-web-1 Stopped 
+ Container qa-m12-worker-1 Stopped 
+{"time":"2026-11-21T13:27:50.870Z","level":"info","msg":"migration reverted","migrations":["0004_database_roles"]}
+{"time":"2026-11-21T13:27:51.352Z","level":"error","msg":"migrate down failed","error":"error: Rollback of 0003_audit_log refused: audit_log has rows. Export the audit log first (README, \"Rolling back a release\"); a routine rollback never drops audit history.","code":"55000"}
+

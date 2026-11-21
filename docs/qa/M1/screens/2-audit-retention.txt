@@ -1,0 +1,75 @@
+=== Criterion 4 (details and ip_prefix rules; retention) on the live stack ===
+--- allowed: ip_prefix /24 on sign_in, details with field names only
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+--- refused: values in details
+ERROR:  new row for relation "audit_log" violates check constraint "audit_log_details_field_names_only"
+DETAIL:  Failing row contains (11, 2026-11-21 13:24:59.891378+00, null, update, person, 00000000-0000-4000-8000-0000000000a1, null, {"before": "QA Alpha", "fields": ["display_name"]}).
+ERROR:  new row for relation "audit_log" violates check constraint "audit_log_details_field_names_only"
+DETAIL:  Failing row contains (12, 2026-11-21 13:24:59.974014+00, null, update, person, 00000000-0000-4000-8000-0000000000a1, null, {"fields": ["QA Alpha"]}).
+ERROR:  new row for relation "audit_log" violates check constraint "audit_log_details_field_names_only"
+DETAIL:  Failing row contains (13, 2026-11-21 13:25:00.061476+00, null, update, person, 00000000-0000-4000-8000-0000000000a1, null, {"fields": [{"display_name": "QA Alpha"}]}).
+--- retention: seed rows older than the limits as the bootstrap admin (the app cannot set at), then run the function as vault_app
+ERROR:  new row for relation "audit_log" violates check constraint "audit_log_record_action_has_entity"
+DETAIL:  Failing row contains (15, 2024-11-20 13:25:00.139299+00, null, view, null, null, null, null).
+before:
+ id | age | action | ip_prefix 
+----+-----+--------+-----------
+(0 rows)
+
+> select * from audit_log_retention()   (as vault_app)
+ deleted | ip_prefixes_cleared | users_deleted 
+---------+---------------------+---------------
+       0 |                   0 |             0
+(1 row)
+
+after:
+ id | age | action | ip_prefix 
+----+-----+--------+-----------
+(0 rows)
+
+--- app cannot fake retention mode by hand:
+ set_config 
+------------
+ on
+(1 row)
+
+ERROR:  permission denied for table audit_log
+--- total audit rows now:
+5
+--- retention (re-run): seed rows older than the limits as the bootstrap admin (the app cannot set at)
+before:
+ id |    age    | action  |    ip_prefix    
+----+-----------+---------+-----------------
+ 16 | 1096 days | view    | 
+ 19 | 1096 days | sign_in | 198.51.100.0/24
+ 17 | 731 days  | view    | 
+ 18 | 700 days  | view    | 
+ 20 | 100 days  | sign_in | 192.0.2.0/24
+ 21 | 80 days   | sign_in | 192.0.2.0/24
+(6 rows)
+
+> select * from audit_log_retention()   (as vault_app)
+ deleted | ip_prefixes_cleared | users_deleted 
+---------+---------------------+---------------
+       3 |                   1 |             0
+(1 row)
+
+after:
+ id |   age    | action  |  ip_prefix   
+----+----------+---------+--------------
+ 18 | 700 days | view    | 
+ 20 | 100 days | sign_in | 
+ 21 | 80 days  | sign_in | 192.0.2.0/24
+(3 rows)
+
+--- superuser cannot edit/delete a fresh row either (trigger):
+ERROR:  audit_log is append-only
+CONTEXT:  PL/pgSQL function audit_log_guard() line 7 at RAISE
+ERROR:  audit_log is append-only
+CONTEXT:  PL/pgSQL function audit_log_guard() line 7 at RAISE
+ERROR:  audit_log is append-only
+CONTEXT:  PL/pgSQL function audit_log_guard() line 4 at RAISE
+--- total audit rows now:
+8

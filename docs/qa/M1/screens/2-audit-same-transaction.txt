@@ -1,0 +1,19 @@
+=== Criterion 4: no change without its audit row (same transaction) ===
+--- baseline
+people=3
+audit create rows=4
+--- admin temporarily revokes the app's INSERT on audit_log.details (throwaway DB), so the audit write must fail
+REVOKE
+repo.create threw: error | code: 42501
+--- after failed create: person must NOT exist (rolled back)
+people named QA Atomic Probe=0
+people total=3
+GRANT
+--- privilege restored; same call now succeeds and writes both rows
+create succeeded (expected now)
+people named QA Atomic Probe=1
+ id | action | entity_type | same_entity | has_actor |                     details                     
+----+--------+-------------+-------------+-----------+-------------------------------------------------
+ 43 | create | person      | t           | t         | {"fields": ["display_name", "owner_person_id"]}
+(1 row)
+

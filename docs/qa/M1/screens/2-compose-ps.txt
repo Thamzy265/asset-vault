@@ -1,0 +1,10 @@
+$ docker compose -p qa-m12 ps -a   (final state)
+NAME                IMAGE                      COMMAND                  SERVICE    CREATED         STATUS                        PORTS
+qa-m12-migrate-1    qa-m12-migrate             "docker-entrypoint.s…"   migrate    5 minutes ago   Exited (0) 6 seconds ago      
+qa-m12-postgres-1   postgres:18.7-alpine3.24   "docker-entrypoint.s…"   postgres   5 minutes ago   Up About a minute (healthy)   5432/tcp
+qa-m12-web-1        qa-m12-web                 "docker-entrypoint.s…"   web        5 minutes ago   Up 5 seconds (healthy)        127.0.0.1:3917->3000/tcp
+qa-m12-worker-1     qa-m12-worker              "docker-entrypoint.s…"   worker     5 minutes ago   Up 5 seconds (healthy)        
+
+$ client logins in pg_stat_activity (excluding the bootstrap superuser)
+vault_app||2
+vault_app|pgboss:6e771f7c|3

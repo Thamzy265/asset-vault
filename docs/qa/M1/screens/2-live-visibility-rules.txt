@@ -1,0 +1,42 @@
+# Private person (owned by B): who can see it
+PASS  B creates private record owned by B -> ok (visibility=private)
+PASS  B (owner's linked user) get -> ok (visibility=private)
+PASS  admin A get -> ok (visibility=private)
+PASS  member C get by id -> NotFoundError
+PASS  member C get random uuid (same error as hidden) -> NotFoundError
+PASS  member C get malformed id -> NotFoundError
+PASS  member C list excludes it -> ok
+PASS  admin A list includes it -> ok
+# Writes against a hidden record are not-found (no probing)
+PASS  C update hidden -> NotFoundError
+PASS  C change visibility of hidden -> NotFoundError
+PASS  C delete hidden -> NotFoundError
+# Family record owned by B: ordinary edit by any member, ownership changes only owner/admin
+PASS  B creates family record owned by B -> ok (visibility=family)
+PASS  C edits ordinary field (display name) of family record -> ok (visibility=family)
+PASS  C edits relationship -> ok (visibility=family)
+PASS  C changes visibility -> ForbiddenError
+PASS  C changes owner to self -> ForbiddenError
+PASS  C deletes it -> ForbiddenError
+PASS  B (owner) changes visibility to private -> ok (visibility=private)
+PASS  C now cannot see it -> NotFoundError
+PASS  admin A changes visibility back to family -> ok (visibility=family)
+# Create rules
+PASS  member B creates a record owned by C -> ForbiddenError
+PASS  member B creates with unknown owner id -> NotFoundError
+PASS  admin A creates a record owned by C -> ok (visibility=family)
+# A person owns their own record (decision 2)
+PASS  B makes own people-row private (owner = linked user) -> ok (visibility=private)
+PASS  C cannot see B's now-private person row -> NotFoundError
+PASS  B makes it family again (no lock-out) -> ok (visibility=family)
+# Owner / delete by the right people
+PASS  owner B deletes own private record -> ok
+PASS  get after delete -> NotFoundError
+PASS  admin A deletes record owned by C -> ok
+PASS  owner B deletes family record -> ok
+# Validation
+PASS  unknown field refused -> ValidationError
+PASS  blank name refused -> ValidationError
+PASS  bad visibility refused -> ValidationError
+
+SUMMARY: 33 passed, 0 failed
