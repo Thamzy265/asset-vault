@@ -23,6 +23,18 @@ export class NotFoundError extends Error {
   }
 }
 
+/**
+ * The viewer can see the record but may not make this change (decision 1:
+ * owner, visibility and delete are for the owner's linked user and admins).
+ * Used only for records the viewer can already see, so it reveals nothing.
+ */
+export class ForbiddenError extends Error {
+  override name = "ForbiddenError";
+  constructor() {
+    super("Forbidden");
+  }
+}
+
 /** Delete refused: the person still owns records or is linked to a login. Reassign or unlink first. */
 export class PersonInUseError extends Error {
   override name = "PersonInUseError";
@@ -90,9 +102,54 @@ export function parseInput<T>(schema: z.ZodType<T>, input: unknown): T {
 export type RecordTable = { [K in keyof Database]: Database[K] extends RecordColumns ? K : never }[keyof Database];
 
 /**
+ * Tables whose rows are people: the user linked to that person counts as the
+ * row's owner too, so nobody can lock themselves out of their own record
+ * (decision 2).
+ */
+const SELF_OWNED: ReadonlySet<RecordTable> = new Set<RecordTable>(["people"]);
+
+/** The viewer owns the row: it is owned by the viewer's person, or (people) it is that person. */
+export function isOwner(viewer: Viewer, table: RecordTable, row: { id: string; owner_person_id: string | null }): boolean {
+  const v = checkViewer(viewer);
+  if (v.personId === null) return false;
+  return row.owner_person_id === v.personId || (SELF_OWNED.has(table) && row.id === v.personId);
+}
+
+/**
+ * Decision 1: changing the owner or the visibility, and deleting, are for the
+ * owner's linked user and admins only.
+ */
+export function canManage(viewer: Viewer, table: RecordTable, row: { id: string; owner_person_id: string | null }): boolean {
+  return checkViewer(viewer).role === "admin" || isOwner(viewer, table, row);
+}
+
+/**
+ * Decision 1: the ordinary fields of a visible record may be edited by its
+ * owner's linked user and admins, and, for `family` records only, by any
+ * signed-in member.
+ */
+export function canEdit(
+  viewer: Viewer,
+  table: RecordTable,
+  row: { id: string; owner_person_id: string | null; visibility: string },
+): boolean {
+  return row.visibility === "family" || canManage(viewer, table, row);
+}
+
+/**
+ * Decision 1: a member may create records owned by themselves only; admins
+ * may create records for anyone, or with no owner.
+ */
+export function canCreateFor(viewer: Viewer, ownerPersonId: string | null): boolean {
+  const v = checkViewer(viewer);
+  return v.role === "admin" || (v.personId !== null && ownerPersonId === v.personId);
+}
+
+/**
  * THE visibility rule (M1.2 design note), as a WHERE condition on `table`:
  * - `family`: every signed-in user;
- * - `private`: the owner's linked user and admins only.
+ * - `private`: the owner's linked user (for people, also the person's own
+ *   linked user, decision 2) and admins only.
  * Every repository read and write filters with this, so an invisible record
  * looks exactly like a missing one.
  */
@@ -101,7 +158,10 @@ export function visibleTo(viewer: Viewer, table: RecordTable): RawBuilder<boolea
   if (v.role === "admin") return sql<boolean>`true`;
   const visibility = sql.ref(`${table}.visibility`);
   if (v.personId === null) return sql<boolean>`${visibility} = 'family'`;
-  return sql<boolean>`(${visibility} = 'family' or ${sql.ref(`${table}.owner_person_id`)} = ${v.personId})`;
+  const owned = SELF_OWNED.has(table)
+    ? sql<boolean>`(${sql.ref(`${table}.owner_person_id`)} = ${v.personId} or ${sql.ref(`${table}.id`)} = ${v.personId})`
+    : sql<boolean>`${sql.ref(`${table}.owner_person_id`)} = ${v.personId}`;
+  return sql<boolean>`(${visibility} = 'family' or ${owned})`;
 }
 
 /**

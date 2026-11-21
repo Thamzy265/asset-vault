@@ -3,7 +3,7 @@ import { sql, type Kysely } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb } from "../src/client.ts";
 import { migrateUp } from "../src/migrate.ts";
-import { NotFoundError, PersonInUseError, ValidationError, type Viewer } from "../src/access.ts";
+import { ForbiddenError, NotFoundError, PersonInUseError, ValidationError, type Viewer } from "../src/access.ts";
 import { peopleRepository, type Person } from "../src/people.ts";
 import type { Database } from "../src/schema.ts";
 import { freshDatabase } from "./support/fresh-database.ts";
@@ -68,7 +68,7 @@ describe("visibility (AC2)", () => {
   beforeAll(async () => {
     privateOfBea = await people.create(bea, { displayName: "Bea's private", ownerPersonId: bea.personId, visibility: "private" });
     privateNoOwner = await people.create(admin, { displayName: "Unowned private", visibility: "private" });
-    family = await people.create(carl, { displayName: "Family person" });
+    family = await people.create(carl, { displayName: "Family person", ownerPersonId: carl.personId });
   });
 
   it("family records are visible to every signed-in user", async () => {
@@ -136,17 +136,17 @@ describe("visibility (AC2)", () => {
 
 describe("writes and their audit rows (AC4)", () => {
   it("create returns the person, stamps who created it, and writes a create row with field names only", async () => {
-    const created = await people.create(bea, { displayName: "Dana Secretname", relationship: "cousin" });
-    expect(created).toMatchObject({ displayName: "Dana Secretname", relationship: "cousin", visibility: "family", ownerPersonId: null, createdByUserId: bea.userId, updatedByUserId: bea.userId });
+    const created = await people.create(bea, { displayName: "Dana Secretname", relationship: "cousin", ownerPersonId: bea.personId });
+    expect(created).toMatchObject({ displayName: "Dana Secretname", relationship: "cousin", visibility: "family", ownerPersonId: bea.personId, createdByUserId: bea.userId, updatedByUserId: bea.userId });
     const rows = await auditRows(created.id);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ action: "create", actor_user_id: bea.userId, entity_type: "person", entity_id: created.id, ip_prefix: null });
-    expect(rows[0]?.details?.fields.sort()).toEqual(["display_name", "relationship"]);
+    expect(rows[0]?.details?.fields.sort()).toEqual(["display_name", "owner_person_id", "relationship"]);
     expect(JSON.stringify(rows)).not.toMatch(/Secretname|cousin/);
   });
 
   it("update writes an update row naming only the fields that changed, never their values", async () => {
-    const p = await people.create(bea, { displayName: "Eve Oldname", relationship: "aunt" });
+    const p = await people.create(bea, { displayName: "Eve Oldname", relationship: "aunt", ownerPersonId: bea.personId });
     const updated = await people.update(carl, p.id, { displayName: "Eve Newname", relationship: "aunt" });
     expect(updated).toMatchObject({ displayName: "Eve Newname", relationship: "aunt", updatedByUserId: carl.userId, createdByUserId: bea.userId });
     const rows = (await auditRows(p.id)).filter((r) => r.action === "update");
@@ -156,25 +156,25 @@ describe("writes and their audit rows (AC4)", () => {
   });
 
   it("an update that changes nothing writes nothing", async () => {
-    const p = await people.create(bea, { displayName: "Same" });
+    const p = await people.create(bea, { displayName: "Same", ownerPersonId: bea.personId });
     await people.update(bea, p.id, { displayName: "Same" });
     expect((await auditRows(p.id)).map((r) => r.action)).toEqual(["create"]);
   });
 
   it("delete removes the person and writes a delete row", async () => {
-    const p = await people.create(bea, { displayName: "Gone" });
+    const p = await people.create(bea, { displayName: "Gone", ownerPersonId: bea.personId });
     await people.remove(admin, p.id);
     await expect(people.get(admin, p.id)).rejects.toBeInstanceOf(NotFoundError);
     expect((await auditRows(p.id)).map((r) => [r.action, r.actor_user_id])).toEqual([["create", bea.userId], ["delete", admin.userId]]);
   });
 
   it("delete is refused while the person owns records, writes no audit row, and works after reassigning", async () => {
-    const owner = await people.create(bea, { displayName: "Owner" });
-    const child = await people.create(bea, { displayName: "Child", ownerPersonId: owner.id });
+    const owner = await people.create(bea, { displayName: "Owner", ownerPersonId: bea.personId });
+    const child = await people.create(admin, { displayName: "Child", ownerPersonId: owner.id });
     await expect(people.remove(bea, owner.id)).rejects.toBeInstanceOf(PersonInUseError);
     await expect(people.get(bea, owner.id)).resolves.toBeDefined();
     expect((await auditRows(owner.id)).map((r) => r.action)).toEqual(["create", "view"]);
-    await people.update(bea, child.id, { ownerPersonId: null });
+    await people.update(admin, child.id, { ownerPersonId: null });
     await people.remove(bea, owner.id);
   });
 
@@ -183,11 +183,11 @@ describe("writes and their audit rows (AC4)", () => {
   });
 
   it("no change without its audit row: when the audit insert fails, create, update and delete all roll back", async () => {
-    const p = await people.create(bea, { displayName: "Stays" });
+    const p = await people.create(bea, { displayName: "Stays", ownerPersonId: bea.personId });
     const before = await db.selectFrom("people").select(sql<string>`count(*)`.as("n")).executeTakeFirstOrThrow();
     const restore = await breakAuditInserts();
     try {
-      await expect(people.create(bea, { displayName: "Never saved" })).rejects.toThrow();
+      await expect(people.create(bea, { displayName: "Never saved", ownerPersonId: bea.personId })).rejects.toThrow();
       await expect(people.update(bea, p.id, { displayName: "Never renamed" })).rejects.toThrow();
       await expect(people.remove(bea, p.id)).rejects.toThrow();
     } finally {
@@ -200,14 +200,14 @@ describe("writes and their audit rows (AC4)", () => {
 
   it("a failed insert (over-length relationship, refused by the database) leaves no person and no audit row", async () => {
     const audits = (await auditRows()).length;
-    await expect(people.create(bea, { displayName: "Valid", relationship: "x".repeat(51) })).rejects.toMatchObject({ code: "23514" });
+    await expect(people.create(bea, { displayName: "Valid", relationship: "x".repeat(51), ownerPersonId: bea.personId })).rejects.toMatchObject({ code: "23514" });
     expect((await auditRows()).length).toBe(audits);
   });
 });
 
 describe("reads and their view rows", () => {
   it("get writes one view row for the record", async () => {
-    const p = await people.create(bea, { displayName: "Viewed" });
+    const p = await people.create(bea, { displayName: "Viewed", ownerPersonId: bea.personId });
     await people.get(carl, p.id);
     const views = (await auditRows(p.id)).filter((r) => r.action === "view");
     expect(views).toMatchObject([{ actor_user_id: carl.userId, entity_type: "person", entity_id: p.id, details: null }]);
@@ -230,7 +230,7 @@ describe("reads and their view rows", () => {
   });
 
   it("a failed view-audit write never fails the read; it logs an error with ids and code only", async () => {
-    const p = await people.create(bea, { displayName: "Readable Secretname" });
+    const p = await people.create(bea, { displayName: "Readable Secretname", ownerPersonId: bea.personId });
     logged.length = 0;
     const restore = await breakAuditInserts();
     try {
@@ -341,5 +341,109 @@ describe("name rules (decision 6, B1)", () => {
       );
       expect(result, JSON.stringify(name)).toBe("23514");
     }
+  });
+});
+
+describe("write rules (decisions 1 and 2): seeing is not editing", () => {
+  let famOfBea: Person;
+  let privOfBea: Person;
+  const auditCount = async () => (await auditRows()).length;
+
+  beforeAll(async () => {
+    famOfBea = await people.create(bea, { displayName: "Bea family", ownerPersonId: bea.personId });
+    privOfBea = await people.create(bea, { displayName: "Bea private", ownerPersonId: bea.personId, visibility: "private" });
+  });
+
+  it("any signed-in member may edit the ordinary fields of a family record they don't own", async () => {
+    await expect(people.update(carl, famOfBea.id, { displayName: "Edited by Carl", relationship: "cousin" })).resolves.toMatchObject({ displayName: "Edited by Carl", relationship: "cousin" });
+    await expect(people.update(nobody, famOfBea.id, { relationship: "aunt" })).resolves.toMatchObject({ relationship: "aunt" });
+  });
+
+  it("the ordinary fields of a private record: its owner and admins edit them; everyone else gets not-found", async () => {
+    await expect(people.update(bea, privOfBea.id, { relationship: "self" })).resolves.toMatchObject({ relationship: "self" });
+    await expect(people.update(admin, privOfBea.id, { relationship: "set by admin" })).resolves.toMatchObject({ relationship: "set by admin" });
+    for (const viewer of [carl, nobody]) await expect(people.update(viewer, privOfBea.id, { relationship: "x" })).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("changing the owner or the visibility of a visible record someone else owns is forbidden, changes nothing and writes no audit row", async () => {
+    const before = await auditCount();
+    for (const viewer of [carl, nobody]) {
+      for (const changes of [{ ownerPersonId: carl.personId }, { ownerPersonId: null }, { visibility: "private" as const }, { displayName: "Sneaky", visibility: "private" as const }]) {
+        await expect(people.update(viewer, famOfBea.id, changes), JSON.stringify(changes)).rejects.toBeInstanceOf(ForbiddenError);
+      }
+    }
+    expect(await auditCount()).toBe(before);
+    expect(await people.get(admin, famOfBea.id)).toMatchObject({ ownerPersonId: bea.personId, visibility: "family" });
+  });
+
+  it("re-sending the current owner and visibility is not a change, so a member editing a family record may include them", async () => {
+    await expect(people.update(carl, famOfBea.id, { displayName: "Resent", ownerPersonId: bea.personId!.toUpperCase(), visibility: "family" })).resolves.toMatchObject({ displayName: "Resent" });
+  });
+
+  it("the owner's linked user and admins may change the owner and the visibility", async () => {
+    const rec = await people.create(bea, { displayName: "Movable", ownerPersonId: bea.personId });
+    await expect(people.update(bea, rec.id, { visibility: "private" })).resolves.toMatchObject({ visibility: "private" });
+    await expect(people.update(bea, rec.id, { visibility: "family" })).resolves.toMatchObject({ visibility: "family" });
+    await expect(people.update(admin, rec.id, { visibility: "private" })).resolves.toMatchObject({ visibility: "private" });
+    await expect(people.update(admin, rec.id, { ownerPersonId: null, visibility: "family" })).resolves.toMatchObject({ ownerPersonId: null });
+    await expect(people.update(admin, rec.id, { ownerPersonId: bea.personId })).resolves.toMatchObject({ ownerPersonId: bea.personId });
+    // The owner may give the record away; then the new owner holds the rights.
+    await expect(people.update(bea, rec.id, { ownerPersonId: carl.personId })).resolves.toMatchObject({ ownerPersonId: carl.personId });
+    await expect(people.update(bea, rec.id, { ownerPersonId: bea.personId })).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(people.update(carl, rec.id, { visibility: "private" })).resolves.toMatchObject({ visibility: "private" });
+  });
+
+  it("delete: the owner's linked user and admins only; another member gets forbidden on a family record and not-found on a hidden one", async () => {
+    const one = await people.create(bea, { displayName: "Deletable 1", ownerPersonId: bea.personId });
+    const two = await people.create(bea, { displayName: "Deletable 2", ownerPersonId: bea.personId });
+    const before = await auditCount();
+    for (const viewer of [carl, nobody]) {
+      await expect(people.remove(viewer, one.id)).rejects.toBeInstanceOf(ForbiddenError);
+      await expect(people.remove(viewer, privOfBea.id)).rejects.toBeInstanceOf(NotFoundError);
+    }
+    expect(await auditCount()).toBe(before);
+    await expect(people.remove(bea, one.id)).resolves.toBeUndefined();
+    await expect(people.remove(admin, two.id)).resolves.toBeUndefined();
+  });
+
+  it("create: a member creates records owned by themselves only; anyone else is forbidden, or not-found when the owner is hidden", async () => {
+    await expect(people.create(carl, { displayName: "Carl's own", ownerPersonId: carl.personId })).resolves.toMatchObject({ ownerPersonId: carl.personId });
+    await expect(people.create(carl, { displayName: "Private own", ownerPersonId: carl.personId, visibility: "private" })).resolves.toMatchObject({ visibility: "private" });
+    const before = await auditCount();
+    await expect(people.create(carl, { displayName: "For Bea", ownerPersonId: bea.personId })).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(people.create(carl, { displayName: "For a family record", ownerPersonId: famOfBea.id })).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(people.create(carl, { displayName: "Unowned" })).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(people.create(carl, { displayName: "Unowned", ownerPersonId: null })).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(people.create(carl, { displayName: "Under hidden", ownerPersonId: privOfBea.id })).rejects.toBeInstanceOf(NotFoundError);
+    await expect(people.create(nobody, { displayName: "No person" })).rejects.toBeInstanceOf(ForbiddenError);
+    expect(await auditCount()).toBe(before);
+  });
+
+  it("create: an admin creates records for anyone, or with no owner", async () => {
+    await expect(people.create(admin, { displayName: "For Bea by admin", ownerPersonId: bea.personId, visibility: "private" })).resolves.toMatchObject({ ownerPersonId: bea.personId });
+    await expect(people.create(admin, { displayName: "Under a private record", ownerPersonId: privOfBea.id })).resolves.toMatchObject({ ownerPersonId: privOfBea.id });
+    await expect(people.create(admin, { displayName: "No owner" })).resolves.toMatchObject({ ownerPersonId: null });
+  });
+
+  it("a person owns their own record (decision 2): the linked member can make it private and still see, edit and reopen it; others can't change it", async () => {
+    const mine = await people.create(admin, { displayName: "Dee" });
+    const dee: Viewer = await user("member", mine.id);
+    await expect(people.update(carl, mine.id, { visibility: "private" })).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(people.update(dee, mine.id, { visibility: "private" })).resolves.toMatchObject({ visibility: "private" });
+    await expect(people.get(dee, mine.id)).resolves.toMatchObject({ visibility: "private" });
+    expect((await people.list(dee)).map((p) => p.id)).toContain(mine.id);
+    await expect(people.update(dee, mine.id, { displayName: "Dee Renamed" })).resolves.toMatchObject({ displayName: "Dee Renamed" });
+    await expect(people.get(carl, mine.id)).rejects.toBeInstanceOf(NotFoundError);
+    await expect(people.update(dee, mine.id, { visibility: "family" })).resolves.toMatchObject({ visibility: "family" });
+    // Deleting your own person is allowed by the rule, but the database refuses while a login links to it.
+    await expect(people.remove(dee, mine.id)).rejects.toBeInstanceOf(PersonInUseError);
+    await expect(people.remove(carl, mine.id)).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
+  it("ForbiddenError says only 'Forbidden': no record, field or owner in it", async () => {
+    const error = (await people.remove(carl, famOfBea.id).catch((e: unknown) => e)) as ForbiddenError;
+    expect(error).toBeInstanceOf(ForbiddenError);
+    expect([error.name, error.message]).toEqual(["ForbiddenError", "Forbidden"]);
+    expect(Object.getOwnPropertyNames(error).filter((n) => n !== "stack").sort()).toEqual(["message", "name"]);
   });
 });

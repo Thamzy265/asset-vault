@@ -4,7 +4,7 @@ import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb } from "../src/client.ts";
 import { migrateUp } from "../src/migrate.ts";
-import { NotFoundError, PersonInUseError, ValidationError, type Viewer } from "../src/access.ts";
+import { ForbiddenError, NotFoundError, PersonInUseError, ValidationError, type Viewer } from "../src/access.ts";
 import { peopleRepository, type Person } from "../src/people.ts";
 import type { Database } from "../src/schema.ts";
 import { freshDatabase } from "./support/fresh-database.ts";
@@ -99,7 +99,7 @@ describe("id forms: every repository function answers not-found, never anything 
   });
 
   it("an uppercase spelling of a VISIBLE record's id is not a way to a different answer than the lowercase one (admin gets it, member of a family record gets it)", async () => {
-    const fam = await people.create(carl, { displayName: "Fam" });
+    const fam = await people.create(carl, { displayName: "Fam", ownerPersonId: carl.personId });
     const upper = fam.id.toUpperCase();
     // Either both spellings work or both are not-found; they must never differ by viewer in a way that leaks.
     const asCarl = await people.get(carl, upper).then(
@@ -140,7 +140,7 @@ describe("who sees what: admin, member without a person, admin without a person"
   beforeAll(async () => {
     privOwnedByBea = await people.create(admin, { displayName: "P1", ownerPersonId: bea.personId, visibility: "private" });
     privUnowned = await people.create(admin, { displayName: "P2", visibility: "private" });
-    fam = await people.create(carl, { displayName: "F1" });
+    fam = await people.create(carl, { displayName: "F1", ownerPersonId: carl.personId });
   });
 
   it("an admin sees, edits and deletes everything, linked to a person or not", async () => {
@@ -149,7 +149,7 @@ describe("who sees what: admin, member without a person, admin without a person"
       expect(ids).toEqual(expect.arrayContaining([privOwnedByBea.id, privUnowned.id, fam.id]));
       await expect(people.get(viewer, privOwnedByBea.id)).resolves.toMatchObject({ id: privOwnedByBea.id });
     }
-    const throwaway = await people.create(carl, { displayName: "Throwaway", visibility: "private" });
+    const throwaway = await people.create(carl, { displayName: "Throwaway", ownerPersonId: carl.personId, visibility: "private" });
     await expect(people.update(adminNoPerson, throwaway.id, { displayName: "Edited by admin" })).resolves.toMatchObject({ displayName: "Edited by admin" });
     await expect(people.remove(adminNoPerson, throwaway.id)).resolves.toBeUndefined();
   });
@@ -260,7 +260,7 @@ describe("no oracle between 'does not exist' and 'exists but hidden'", () => {
 describe("forged or stale viewer (the repository trusts the session; what happens if it lies)", () => {
   it("a viewer whose user id is not a real user can read, but the failed view audit is logged and never breaks the read", async () => {
     const ghost: Viewer = { userId: randomUUID(), role: "member", personId: null };
-    const fam = await people.create(carl, { displayName: "Seen by ghost" });
+    const fam = await people.create(carl, { displayName: "Seen by ghost", ownerPersonId: carl.personId });
     logged.length = 0;
     await expect(people.get(ghost, fam.id)).resolves.toMatchObject({ id: fam.id });
     expect(logged.some((l) => l.level === "error" && l.msg === "audit view write failed")).toBe(true);
@@ -277,16 +277,16 @@ describe("forged or stale viewer (the repository trusts the session; what happen
 
 describe("transaction integrity and concurrency", () => {
   it("an update that changes nothing writes no audit row, does not move updated_at, and is not charged to the viewer", async () => {
-    const p = await people.create(bea, { displayName: "Same", relationship: "x" });
+    const p = await people.create(admin, { displayName: "Same", relationship: "x" });
     const before = await auditCount();
     const again = await people.update(carl, p.id, { displayName: "Same", relationship: "x", visibility: "family", ownerPersonId: null });
     expect(again.updatedAt).toEqual(p.updatedAt);
-    expect(again.updatedByUserId).toBe(bea.userId);
+    expect(again.updatedByUserId).toBe(admin.userId);
     expect(await auditCount()).toBe(before);
   });
 
   it("an empty change set writes nothing and returns the person", async () => {
-    const p = await people.create(bea, { displayName: "Empty change" });
+    const p = await people.create(bea, { displayName: "Empty change", ownerPersonId: bea.personId });
     const before = await auditCount();
     await expect(people.update(bea, p.id, {})).resolves.toMatchObject({ id: p.id });
     await expect(people.update(bea, p.id, { displayName: undefined } as never)).resolves.toMatchObject({ id: p.id });
@@ -294,7 +294,7 @@ describe("transaction integrity and concurrency", () => {
   });
 
   it("setting relationship to null on a person that has none is a no-op, but clearing a real one is an update that names only that field", async () => {
-    const p = await people.create(bea, { displayName: "Rel" });
+    const p = await people.create(bea, { displayName: "Rel", ownerPersonId: bea.personId });
     const a = await auditCount();
     await people.update(bea, p.id, { relationship: null });
     expect(await auditCount()).toBe(a);
@@ -306,7 +306,7 @@ describe("transaction integrity and concurrency", () => {
 
   it("a failed update (hidden new owner) leaves the row, its updated_at and the audit log untouched", async () => {
     const hiddenOwner = await people.create(bea, { displayName: "Hidden owner", ownerPersonId: bea.personId, visibility: "private" });
-    const p = await people.create(carl, { displayName: "Stays" });
+    const p = await people.create(carl, { displayName: "Stays", ownerPersonId: carl.personId });
     const before = await auditCount();
     await expect(people.update(carl, p.id, { displayName: "Changed", ownerPersonId: hiddenOwner.id })).rejects.toBeInstanceOf(NotFoundError);
     expect(await people.get(carl, p.id)).toMatchObject({ displayName: "Stays", updatedAt: p.updatedAt });
@@ -314,13 +314,13 @@ describe("transaction integrity and concurrency", () => {
   });
 
   it("an update that violates a DB check (relationship too long) in a multi-field change applies none of the fields", async () => {
-    const p = await people.create(carl, { displayName: "Atomic", relationship: "old" });
+    const p = await people.create(carl, { displayName: "Atomic", relationship: "old", ownerPersonId: carl.personId });
     await expect(people.update(carl, p.id, { displayName: "New name", relationship: "x".repeat(51) })).rejects.toMatchObject({ code: "23514" });
     expect(await people.get(carl, p.id)).toMatchObject({ displayName: "Atomic", relationship: "old" });
   });
 
   it("concurrent updates of different fields both apply, and each audit row names only its own field", async () => {
-    const p = await people.create(carl, { displayName: "Race", relationship: "r0" });
+    const p = await people.create(carl, { displayName: "Race", relationship: "r0", ownerPersonId: carl.personId });
     await Promise.all([people.update(carl, p.id, { displayName: "Race 2" }), people.update(bea, p.id, { relationship: "r2" })]);
     expect(await people.get(admin, p.id)).toMatchObject({ displayName: "Race 2", relationship: "r2" });
     const rows = await db.selectFrom("audit_log").select(["details", "actor_user_id"]).where("entity_id", "=", p.id).where("action", "=", "update").execute();
@@ -328,7 +328,7 @@ describe("transaction integrity and concurrency", () => {
   });
 
   it("concurrent updates of the same field: one value wins, both are audited, none is lost or doubled", async () => {
-    const p = await people.create(carl, { displayName: "Same field" });
+    const p = await people.create(carl, { displayName: "Same field", ownerPersonId: carl.personId });
     const names = Array.from({ length: 8 }, (_, i) => `Writer ${i}`);
     await Promise.all(names.map((n, i) => people.update(i % 2 ? bea : carl, p.id, { displayName: n })));
     const final = await people.get(admin, p.id);
@@ -338,14 +338,14 @@ describe("transaction integrity and concurrency", () => {
   });
 
   it("concurrent identical updates produce exactly one audit row (the second sees the first and has nothing to change)", async () => {
-    const p = await people.create(carl, { displayName: "Dup" });
+    const p = await people.create(carl, { displayName: "Dup", ownerPersonId: carl.personId });
     await Promise.all(Array.from({ length: 5 }, () => people.update(carl, p.id, { displayName: "Dup renamed" })));
     const rows = await db.selectFrom("audit_log").select("id").where("entity_id", "=", p.id).where("action", "=", "update").execute();
     expect(rows).toHaveLength(1);
   });
 
   it("concurrent removes: one succeeds, the rest get not-found, exactly one delete row", async () => {
-    const p = await people.create(carl, { displayName: "Doomed" });
+    const p = await people.create(carl, { displayName: "Doomed", ownerPersonId: carl.personId });
     const results = await Promise.allSettled(Array.from({ length: 5 }, () => people.remove(carl, p.id)));
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     for (const r of results) if (r.status === "rejected") expect(r.reason).toBeInstanceOf(NotFoundError);
@@ -355,7 +355,7 @@ describe("transaction integrity and concurrency", () => {
 
   it("update racing remove: one wins; the loser says not-found; no orphan update row after the delete", async () => {
     for (let i = 0; i < 10; i++) {
-      const p = await people.create(carl, { displayName: `Race ${i}` });
+      const p = await people.create(carl, { displayName: `Race ${i}`, ownerPersonId: carl.personId });
       const [u, r] = await Promise.allSettled([people.update(carl, p.id, { displayName: "Renamed" }), people.remove(carl, p.id)]);
       expect(r.status).toBe("fulfilled");
       if (u.status === "rejected") expect(u.reason).toBeInstanceOf(NotFoundError);
@@ -366,10 +366,10 @@ describe("transaction integrity and concurrency", () => {
   });
 
   it("delete racing a new record that takes the person as owner: either the delete is refused (PersonInUseError) or the owner link is refused; never a dangling owner", async () => {
-    const owner = await people.create(carl, { displayName: "Racing owner" });
+    const owner = await people.create(carl, { displayName: "Racing owner", ownerPersonId: carl.personId });
     const results = await Promise.allSettled([
       people.remove(carl, owner.id),
-      people.create(carl, { displayName: "Owned child", ownerPersonId: owner.id }),
+      people.create(admin, { displayName: "Owned child", ownerPersonId: owner.id }),
     ]);
     const dangling = await sql<{ n: string }>`
       select count(*) as n from people c where c.owner_person_id is not null and not exists (select 1 from people o where o.id = c.owner_person_id)`.execute(db);
@@ -380,19 +380,19 @@ describe("transaction integrity and concurrency", () => {
   });
 
   it("a person that owns itself, or two people that own each other, can be updated and the lookups do not loop", async () => {
-    const a = await people.create(carl, { displayName: "Cycle A" });
-    const b = await people.create(carl, { displayName: "Cycle B", ownerPersonId: a.id });
+    const a = await people.create(carl, { displayName: "Cycle A", ownerPersonId: carl.personId });
+    const b = await people.create(admin, { displayName: "Cycle B", ownerPersonId: a.id });
     await expect(people.update(carl, a.id, { ownerPersonId: b.id })).resolves.toMatchObject({ ownerPersonId: b.id });
-    await expect(people.update(carl, a.id, { ownerPersonId: a.id })).resolves.toMatchObject({ ownerPersonId: a.id });
+    await expect(people.update(admin, a.id, { ownerPersonId: a.id })).resolves.toMatchObject({ ownerPersonId: a.id });
     await expect(people.get(carl, a.id)).resolves.toMatchObject({ id: a.id });
     // Deleting a member of the cycle is refused while another record still points at it.
-    await expect(people.remove(carl, a.id)).rejects.toBeInstanceOf(PersonInUseError);
+    await expect(people.remove(admin, a.id)).rejects.toBeInstanceOf(PersonInUseError);
   });
 
   // Was CONFIRMED BUG B4 (low): ids are now normalised to lowercase at the repository boundary.
   it("B4: uppercase spelling of the owner id that is already the owner is a no-op (same person, same value), not a phantom update", async () => {
-    const owner = await people.create(carl, { displayName: "Owner for case" });
-    const child = await people.create(carl, { displayName: "Child for case", ownerPersonId: owner.id });
+    const owner = await people.create(carl, { displayName: "Owner for case", ownerPersonId: carl.personId });
+    const child = await people.create(admin, { displayName: "Child for case", ownerPersonId: owner.id });
     const before = await auditCount();
     await people.update(carl, child.id, { ownerPersonId: owner.id.toUpperCase() });
     expect(await auditCount()).toBe(before);
@@ -400,7 +400,7 @@ describe("transaction integrity and concurrency", () => {
 });
 
 describe("name and relationship inputs", () => {
-  const make = (displayName: string, extra: Partial<Parameters<typeof people.create>[1]> = {}) => people.create(carl, { displayName, ...extra });
+  const make = (displayName: string, extra: Partial<Parameters<typeof people.create>[1]> = {}) => people.create(carl, { displayName, ownerPersonId: carl.personId, ...extra });
 
   it("length counts characters (code points), not bytes: 100 emoji (400 bytes) are accepted, 101 are refused", async () => {
     const hundred = "😀".repeat(100);
@@ -557,8 +557,8 @@ describe("audit details: field names from a fixed list only, whatever the values
   });
 
   it("a create row lists exactly the fields the caller gave (not all columns), a delete row has no details", async () => {
-    const p = await people.create(carl, { displayName: "Only name" });
-    await people.remove(carl, p.id);
+    const p = await people.create(admin, { displayName: "Only name" });
+    await people.remove(admin, p.id);
     const rows = await db.selectFrom("audit_log").select(["action", "details"]).where("entity_id", "=", p.id).orderBy("id").execute();
     expect(rows).toEqual([
       { action: "create", details: { fields: ["display_name"] } },
@@ -568,7 +568,7 @@ describe("audit details: field names from a fixed list only, whatever the values
 
   it("neither the name nor the relationship of anyone appears anywhere in audit_log or in the logged errors", async () => {
     const secretName = "Zyxwv Qrstuv Unique";
-    const p = await people.create(carl, { displayName: secretName, relationship: "UniqueRelationship" });
+    const p = await people.create(carl, { displayName: secretName, relationship: "UniqueRelationship", ownerPersonId: carl.personId });
     await people.get(carl, p.id);
     await people.update(carl, p.id, { displayName: `${secretName} 2` });
     await people.remove(carl, p.id);
@@ -603,52 +603,58 @@ describe("removing a login", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SPEC QUESTIONS (design note is silent). These tests record what the code does TODAY so the
-// lead can decide the rule; they are intentionally named "CURRENT" and are expected to change.
-describe("spec questions: CURRENT behaviour the design note does not decide", () => {
-  it("Q1a CURRENT: a member can reassign someone else's family record to their own person (owner hijack)", async () => {
+// SPEC QUESTIONS Q1-Q4, now DECIDED by the lead (docs/design/m1-2-data-model.md, "Lead decisions
+// after the tester round", decisions 1 and 2). These tests assert the decided rules.
+describe("decided write rules (were spec questions Q1-Q4)", () => {
+  it("Q1a: a member can't reassign someone else's family record to their own person (no owner hijack): forbidden, nothing changes, no audit row", async () => {
     const victimOwned = await people.create(bea, { displayName: "Bea's record", ownerPersonId: bea.personId });
-    const hijacked = await people.update(carl, victimOwned.id, { ownerPersonId: carl.personId });
-    expect(hijacked.ownerPersonId).toBe(carl.personId);
+    const before = await auditCount();
+    await expect(people.update(carl, victimOwned.id, { ownerPersonId: carl.personId })).rejects.toBeInstanceOf(ForbiddenError);
+    expect(await auditCount()).toBe(before);
+    await expect(people.get(bea, victimOwned.id)).resolves.toMatchObject({ ownerPersonId: bea.personId });
   });
 
-  it("Q1b CURRENT: a member can flip someone else's family record to private, hiding it from every other member (they keep no way back)", async () => {
+  it("Q1b: a member can't flip someone else's family record to private: forbidden, and everyone still sees it", async () => {
     const rec = await people.create(bea, { displayName: "Bea's visible record", ownerPersonId: bea.personId });
-    await people.update(carl, rec.id, { visibility: "private" });
-    // the owner still sees it; the flipper is not the owner so now cannot see or undo it
-    await expect(people.get(bea, rec.id)).resolves.toMatchObject({ visibility: "private" });
-    await expect(people.get(carl, rec.id)).rejects.toBeInstanceOf(NotFoundError);
-    await expect(people.update(carl, rec.id, { visibility: "family" })).rejects.toBeInstanceOf(NotFoundError);
-    await expect(people.get(nobody, rec.id)).rejects.toBeInstanceOf(NotFoundError);
+    await expect(people.update(carl, rec.id, { visibility: "private" })).rejects.toBeInstanceOf(ForbiddenError);
+    for (const viewer of [bea, carl, nobody]) await expect(people.get(viewer, rec.id)).resolves.toMatchObject({ visibility: "family" });
   });
 
-  it("Q1c CURRENT: a member can edit and delete family records they do not own (visibility rule is the only write gate)", async () => {
+  it("Q1c: a member can edit the ordinary fields of a family record they don't own, but can't delete it", async () => {
     const rec = await people.create(bea, { displayName: "Bea's editable", ownerPersonId: bea.personId });
     await expect(people.update(carl, rec.id, { displayName: "Edited by Carl" })).resolves.toMatchObject({ displayName: "Edited by Carl" });
-    await expect(people.remove(carl, rec.id)).resolves.toBeUndefined();
+    await expect(people.remove(carl, rec.id)).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(people.get(bea, rec.id)).resolves.toMatchObject({ displayName: "Edited by Carl" });
   });
 
-  it("Q1d CURRENT: a member can create a private record owned by someone else and then cannot see it", async () => {
-    const rec = await people.create(carl, { displayName: "Gift", ownerPersonId: bea.personId, visibility: "private" });
-    expect(rec.ownerPersonId).toBe(bea.personId);
+  it("Q1d: a member can't create a record owned by someone else (forbidden); an admin can, and the owner then sees it", async () => {
+    const before = await peopleCount();
+    await expect(people.create(carl, { displayName: "Gift", ownerPersonId: bea.personId, visibility: "private" })).rejects.toBeInstanceOf(ForbiddenError);
+    expect(await peopleCount()).toBe(before);
+    const rec = await people.create(admin, { displayName: "Gift by admin", ownerPersonId: bea.personId, visibility: "private" });
     await expect(people.get(carl, rec.id)).rejects.toBeInstanceOf(NotFoundError);
     await expect(people.get(bea, rec.id)).resolves.toMatchObject({ id: rec.id });
   });
 
-  it("Q2 CURRENT: a person record has no owner of its own, so a member who sets THEIR OWN person to private can no longer see it (only an admin can)", async () => {
+  it("Q2: a person owns their own record, so a member who sets THEIR OWN person to private still sees it and can make it family again", async () => {
     const mine = await db.insertInto("people").values({ display_name: "Dee" }).returning("id").executeTakeFirstOrThrow();
     const dee = await user("member", mine.id);
     await people.update(dee, mine.id, { visibility: "private" });
-    await expect(people.get(dee, mine.id)).rejects.toBeInstanceOf(NotFoundError);
+    await expect(people.get(dee, mine.id)).resolves.toMatchObject({ visibility: "private" });
     await expect(people.get(admin, mine.id)).resolves.toMatchObject({ visibility: "private" });
+    await expect(people.get(carl, mine.id)).rejects.toBeInstanceOf(NotFoundError);
+    await expect(people.update(dee, mine.id, { visibility: "family" })).resolves.toMatchObject({ visibility: "family" });
   });
 
-  it("Q3 CURRENT: any member can delete another member's own person record while it is not linked to a login (here: unlinked), and an admin cannot be locked out of anything", async () => {
-    const rec = await people.create(carl, { displayName: "Unlinked person" });
-    await expect(people.remove(bea, rec.id)).resolves.toBeUndefined();
+  it("Q3: a member can't delete another member's person record, even one not linked to a login (forbidden); its owner and an admin can", async () => {
+    const one = await people.create(carl, { displayName: "Unlinked person 1", ownerPersonId: carl.personId });
+    const two = await people.create(carl, { displayName: "Unlinked person 2", ownerPersonId: carl.personId });
+    await expect(people.remove(bea, one.id)).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(people.remove(carl, one.id)).resolves.toBeUndefined();
+    await expect(people.remove(admin, two.id)).resolves.toBeUndefined();
   });
 
-  it("Q4 CURRENT: every visible person is enumerable by every member through list (no pagination, no cap)", async () => {
+  it("Q4 (unchanged at MVP, Later line 'Pagination for the people list'): every visible person is listed for every member, with no cap", async () => {
     const all = await people.list(carl);
     expect(all.length).toBeGreaterThan(5);
   });

@@ -7,7 +7,7 @@ export { ConfigError, loadDbConfig, type DbConfig } from "./config.ts";
 export { readHeartbeat, recordHeartbeat } from "./heartbeat.ts";
 export { EXPECTED_SCHEMA_VERSION, readSchemaVersion } from "./schema-version.ts";
 export type { AuditAction, AuditDetails, Role, Visibility } from "./schema.ts";
-export { NotFoundError, PersonInUseError, ValidationError, type RepositoryOptions, type Viewer } from "./access.ts";
+export { ForbiddenError, NotFoundError, PersonInUseError, ValidationError, type RepositoryOptions, type Viewer } from "./access.ts";
 export { peopleRepository, type NewPerson, type PeopleRepository, type Person, type PersonChanges } from "./people.ts";
 export { errorCode, errorFields, log, type LogLevel } from "./log.ts";
 export { waitForDatabaseReady, type DatabaseReadyOptions } from "./database-ready.ts";

@@ -92,6 +92,7 @@ describe("what @vault/db exports to apps (regression lock)", () => {
         "ConfigError",
         "DatabaseUnavailableError",
         "EXPECTED_SCHEMA_VERSION",
+        "ForbiddenError",
         "NotFoundError",
         "PersonInUseError",
         "closeDatabase",

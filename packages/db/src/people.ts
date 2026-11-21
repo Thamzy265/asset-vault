@@ -3,9 +3,13 @@ import { z } from "zod";
 import {
   auditChange,
   auditViews,
+  canCreateFor,
+  canEdit,
+  canManage,
   checkId,
   checkViewer,
   defaultRepositoryLog,
+  ForbiddenError,
   NotFoundError,
   parseInput,
   PersonInUseError,
@@ -110,8 +114,13 @@ const RESTRICT_VIOLATION = "23001";
 
 /**
  * People: create, get, list, update, delete. Every function takes the viewer
- * and applies the one visibility rule (access.ts); changes write their audit
- * row in the same transaction, reads write a best-effort view row.
+ * and applies the one visibility rule (access.ts) and the write rules
+ * (decisions 1 and 2): ordinary fields of a visible family record are anyone's
+ * to edit; owner, visibility and delete are for the owner's linked user (for a
+ * person, also the user linked to that person) and admins; members create
+ * records owned by themselves only. A refused change to a visible record is a
+ * ForbiddenError; a hidden record is always not-found. Changes write their
+ * audit row in the same transaction, reads write a best-effort view row.
  */
 export function peopleRepository(handle: DbLike, options: RepositoryOptions = {}) {
   const db = kyselyOf(handle);
@@ -135,6 +144,7 @@ export function peopleRepository(handle: DbLike, options: RepositoryOptions = {}
       const input = withCheckedOwner(parseInput(newPersonSchema, newPerson));
       return db.transaction().execute(async (trx) => {
         await assertOwnerVisible(trx, v, input.ownerPersonId);
+        if (!canCreateFor(v, input.ownerPersonId ?? null)) throw new ForbiddenError();
         const values = columnsOf(input);
         const row = await trx
           .insertInto("people")
@@ -198,6 +208,8 @@ export function peopleRepository(handle: DbLike, options: RepositoryOptions = {}
           Object.entries(given).filter(([column, value]) => current[column as keyof PersonColumns] !== value),
         );
         if (Object.keys(changed).length === 0) return toPerson(current);
+        if (!canEdit(v, "people", current)) throw new ForbiddenError();
+        if (("owner_person_id" in changed || "visibility" in changed) && !canManage(v, "people", current)) throw new ForbiddenError();
         if ("owner_person_id" in changed) await assertOwnerVisible(trx, v, changed.owner_person_id);
 
         const row = await trx
@@ -215,13 +227,18 @@ export function peopleRepository(handle: DbLike, options: RepositoryOptions = {}
     async remove(viewer: Viewer, id: string): Promise<void> {
       const v = checkViewer(viewer);
       try {
+        const personId = checkId(id);
         await db.transaction().execute(async (trx) => {
-          const row = await trx
-            .deleteFrom("people")
-            .where("id", "=", checkId(id))
+          const current = await trx
+            .selectFrom("people")
+            .select(["id", "owner_person_id"])
+            .where("id", "=", personId)
             .where(visibleTo(v, "people"))
-            .returning("id")
+            .forUpdate()
             .executeTakeFirst();
+          if (!current) throw new NotFoundError();
+          if (!canManage(v, "people", current)) throw new ForbiddenError();
+          const row = await trx.deleteFrom("people").where("id", "=", current.id).returning("id").executeTakeFirst();
           if (!row) throw new NotFoundError();
           await auditChange(trx, v, "delete", ENTITY, row.id);
         });
