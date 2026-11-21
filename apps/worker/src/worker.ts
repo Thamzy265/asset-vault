@@ -1,4 +1,4 @@
-import { createDb, log, migrateUp, recordHeartbeat, waitForDatabaseReady, type WaitOptions } from "@vault/db";
+import { closeDatabase, log, migrateUp, openDatabase, recordHeartbeat, waitForDatabaseReady, type WaitOptions } from "@vault/db";
 import { PgBoss } from "pg-boss";
 import { HEARTBEAT_CRON, HEARTBEAT_QUEUE, runHeartbeat } from "./heartbeat-job.ts";
 
@@ -20,13 +20,13 @@ export type RunningWorker = {
  * database name, so main() can exit non-zero.
  */
 export async function startWorker(options: WorkerOptions): Promise<RunningWorker> {
-  const db = createDb(options.databaseUrl, { maxConnections: 2 });
+  const db = openDatabase(options.databaseUrl, { maxConnections: 2 });
   try {
     await waitForDatabaseReady(db, options.wait);
     const applied = await migrateUp(db);
     log("info", "migrations applied", { migrations: applied });
   } catch (error) {
-    await db.destroy();
+    await closeDatabase(db);
     throw error;
   }
 
@@ -48,7 +48,7 @@ export async function startWorker(options: WorkerOptions): Promise<RunningWorker
     boss,
     stop: async () => {
       await boss.stop({ graceful: true, timeout: 10_000 });
-      await db.destroy();
+      await closeDatabase(db);
     },
   };
 }

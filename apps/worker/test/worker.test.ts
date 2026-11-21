@@ -1,4 +1,4 @@
-import { DatabaseUnavailableError, createDb, readHeartbeat } from "@vault/db";
+import { DatabaseUnavailableError, closeDatabase, openDatabase, readHeartbeat } from "@vault/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { freshDatabase } from "../../../packages/db/test/support/fresh-database.ts";
 import { HEARTBEAT_QUEUE } from "../src/heartbeat-job.ts";
@@ -26,11 +26,11 @@ describe("startWorker (real Postgres)", () => {
 
     // Run the job now rather than waiting for the next minute.
     await worker.boss.send(HEARTBEAT_QUEUE);
-    const db = createDb(url);
+    const db = openDatabase(url);
     try {
       await expect.poll(() => readHeartbeat(db), { timeout: 15_000, interval: 250 }).not.toBeNull();
     } finally {
-      await db.destroy();
+      await closeDatabase(db);
     }
   });
 

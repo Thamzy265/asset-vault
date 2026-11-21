@@ -1,4 +1,4 @@
-import { createDb } from "@vault/db";
+import { closeDatabase, openDatabase } from "@vault/db";
 import { afterAll, describe, expect, it } from "vitest";
 import { getHealth, healthResponse } from "../src/server/health.ts";
 
@@ -51,13 +51,13 @@ describe("health response does not leak (tester, abuse case: read secrets via he
   });
 
   describe("real pool against an unreachable host with a password in the URL", () => {
-    const dbs: ReturnType<typeof createDb>[] = [];
+    const dbs: ReturnType<typeof openDatabase>[] = [];
     afterAll(async () => {
-      await Promise.all(dbs.map((d) => d.destroy()));
+      await Promise.all(dbs.map((d) => closeDatabase(d)));
     });
 
     it("503 response body and headers contain nothing from the connection string or the driver error", async () => {
-      const db = createDb(URL_WITH_SECRET);
+      const db = openDatabase(URL_WITH_SECRET);
       dbs.push(db);
       const res = await healthResponse(db);
       expect(res.status).toBe(503);
@@ -71,7 +71,7 @@ describe("health response does not leak (tester, abuse case: read secrets via he
     });
 
     it("503 for a URL pg cannot parse (TypeError path) is the same clean body", async () => {
-      const db = createDb(`postgres://vault:${PASSWORD}@${HOST}:notaport/vault`);
+      const db = openDatabase(`postgres://vault:${PASSWORD}@${HOST}:notaport/vault`);
       dbs.push(db);
       const res = await healthResponse(db);
       expect(res.status).toBe(503);

@@ -1,4 +1,4 @@
-import { createDb, migrateUp, recordHeartbeat } from "@vault/db";
+import { closeDatabase, migrateUp, openDatabase, recordHeartbeat } from "@vault/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { freshDatabase } from "../../../packages/db/test/support/fresh-database.ts";
 import { getHealth, healthResponse } from "../src/server/health.ts";
@@ -50,7 +50,7 @@ describe("healthResponse (real Postgres)", () => {
   afterAll(async () => drop?.());
 
   it("returns 200 JSON, never cached, with the app version", async () => {
-    const db = createDb(url);
+    const db = openDatabase(url);
     try {
       await migrateUp(db);
       await recordHeartbeat(db, new Date("2026-11-21T10:00:00.000Z"));
@@ -65,18 +65,18 @@ describe("healthResponse (real Postgres)", () => {
         workerHeartbeat: "2026-11-21T10:00:00.000Z",
       });
     } finally {
-      await db.destroy();
+      await closeDatabase(db);
     }
   });
 
   it("returns 503 with db down when Postgres is unreachable", async () => {
-    const db = createDb("postgres://127.0.0.1:1/unreachable");
+    const db = openDatabase("postgres://127.0.0.1:1/unreachable");
     try {
       const res = await healthResponse(db);
       expect(res.status).toBe(503);
       expect(await res.json()).toMatchObject({ status: "error", db: "down" });
     } finally {
-      await db.destroy();
+      await closeDatabase(db);
     }
   });
 });

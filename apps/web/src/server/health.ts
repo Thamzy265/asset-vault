@@ -1,4 +1,4 @@
-import { pingDatabase, readHeartbeat, type Db } from "@vault/db";
+import { pingDatabase, readHeartbeat, type DbHandle } from "@vault/db";
 import pkg from "../../package.json" with { type: "json" };
 
 /** GET /api/v1/health body. 200 when Postgres answers, 503 when it does not. */
@@ -29,7 +29,7 @@ export async function getHealth(deps: HealthDeps): Promise<{ httpStatus: 200 | 5
   };
 }
 
-export async function healthResponse(db: Db): Promise<Response> {
+export async function healthResponse(db: DbHandle): Promise<Response> {
   const { httpStatus, body } = await getHealth({
     ping: () => pingDatabase(db),
     readHeartbeat: () => readHeartbeat(db),

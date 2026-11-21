@@ -3,6 +3,9 @@ import nextPlugin from "@next/eslint-plugin-next";
 import globals from "globals";
 import tseslint from "typescript-eslint";
 
+const RAW_DB_MESSAGE =
+  "No raw database access outside packages/db: use @vault/db's functions and repositories (they apply the visibility check and write the audit log).";
+
 export default tseslint.config(
   {
     ignores: [
@@ -20,6 +23,31 @@ export default tseslint.config(
     languageOptions: { globals: { ...globals.node } },
     rules: {
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
+    },
+  },
+  {
+    // M1.2: no raw database access outside packages/db. Apps use @vault/db's
+    // functions and repositories, which apply the visibility check and write
+    // the audit log (test/no-raw-db-access.test.ts).
+    files: ["apps/**/*.{ts,tsx,js,mjs,cjs}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: ["kysely", "pg", "pg-pool"].map((name) => ({ name, message: RAW_DB_MESSAGE })),
+          patterns: [
+            { group: ["kysely/*", "pg/*", "pg-pool/*", "@vault/db/*"], message: RAW_DB_MESSAGE },
+            { regex: "(^|/)packages/db/src(/|$)", message: RAW_DB_MESSAGE },
+          ],
+        },
+      ],
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "ImportExpression[source.value=/^(kysely|pg|pg-pool|@vault\\/db\\/)|packages\\/db\\/src/]",
+          message: RAW_DB_MESSAGE,
+        },
+      ],
     },
   },
   {

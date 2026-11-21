@@ -1,11 +1,10 @@
-import type { Kysely } from "kysely";
+import { kyselyOf, type DbLike } from "./handle.ts";
 import { Migrator, type MigrationResultSet } from "kysely/migration";
 import { migrations } from "./migrations/index.ts";
-import type { Database } from "./schema.ts";
 
-function migrator(db: Kysely<Database>): Migrator {
+function migrator(db: DbLike): Migrator {
   return new Migrator({
-    db,
+    db: kyselyOf(db),
     provider: { getMigrations: async () => migrations },
   });
 }
@@ -16,11 +15,11 @@ function unwrap(result: MigrationResultSet): string[] {
 }
 
 /** Applies every pending migration. Returns the names applied. */
-export async function migrateUp(db: Kysely<Database>): Promise<string[]> {
+export async function migrateUp(db: DbLike): Promise<string[]> {
   return unwrap(await migrator(db).migrateToLatest());
 }
 
 /** Reverts the most recent migration. Returns the name reverted (empty if none). */
-export async function migrateDown(db: Kysely<Database>): Promise<string[]> {
+export async function migrateDown(db: DbLike): Promise<string[]> {
   return unwrap(await migrator(db).migrateDown());
 }

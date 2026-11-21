@@ -60,6 +60,3 @@ export interface Database {
   users: UsersTable;
   audit_log: AuditLogTable;
 }
-
-/** The typed query builder for this schema. */
-export type Db = import("kysely").Kysely<Database>;

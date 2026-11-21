@@ -1,7 +1,9 @@
 import { sql, type Kysely } from "kysely";
 import { Migrator } from "kysely/migration";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createDb, migrateDown, migrateUp, migrations, type Database } from "../src/index.ts";
+import { createDb } from "../src/client.ts";
+import { migrateDown, migrateUp, migrations } from "../src/index.ts";
+import type { Database } from "../src/schema.ts";
 import { freshDatabase } from "./support/fresh-database.ts";
 
 const ALL_TABLES = ["_meta", "audit_log", "people", "users"];

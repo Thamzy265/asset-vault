@@ -1,5 +1,6 @@
 import { Kysely, PostgresDialect, sql } from "kysely";
 import pg from "pg";
+import { kyselyOf, type DbLike } from "./handle.ts";
 import type { Database } from "./schema.ts";
 
 export type CreateDbOptions = { maxConnections?: number };
@@ -57,6 +58,6 @@ export function createMigrationDb(databaseUrl: string): Kysely<Database> {
  * Resolves when Postgres answers `select 1`. Rejects within ~3 s when a new
  * connection can't be opened, and within ~5 s when an open one stops answering.
  */
-export async function pingDatabase(db: Kysely<Database>): Promise<void> {
-  await sql`select 1`.execute(db);
+export async function pingDatabase(db: DbLike): Promise<void> {
+  await sql`select 1`.execute(kyselyOf(db));
 }
