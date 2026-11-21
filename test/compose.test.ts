@@ -117,13 +117,14 @@ describe("docker-compose.yml trust boundaries (tester)", () => {
 
 describe("migration gate (review L7)", () => {
   it("a one-shot migrate service runs the migrate CLI from the worker image, once, after Postgres is healthy", async () => {
-    const { services } = await config({ POSTGRES_PASSWORD: "pw12345" });
+    const password = "pw12345";
+    const { services } = await config({ POSTGRES_PASSWORD: password });
     const migrate = services.migrate;
     expect(migrate?.build?.dockerfile).toBe("apps/worker/Dockerfile");
     expect(migrate?.command).toEqual(["node", "packages/db/src/cli.ts", "up"]);
     expect(migrate?.restart ?? "no").toBe("no");
     expect(migrate?.depends_on?.postgres?.condition).toBe("service_healthy");
-    expect(migrate?.environment?.DATABASE_URL).toBe("postgres://vault:pw12345@postgres:5432/vault");
+    expect(migrate?.environment?.DATABASE_URL).toBe(`postgres://vault:${password}@postgres:5432/vault`);
     expect(migrate?.ports ?? []).toEqual([]);
   });
 
