@@ -14,11 +14,10 @@ import { freshDatabase } from "./support/fresh-database.ts";
 // "Trust boundaries and abuse cases" (a member probes a private record by id;
 // an invisible record looks exactly like a missing one).
 //
-// Tests wrapped in `it.fails` are CONFIRMED BUGS (the assertion states the
-// expected behaviour, the test passes while the bug exists and goes red once it
-// is fixed, so the marker must then be removed). Tests in the "spec question"
-// block describe CURRENT behaviour the design note is silent on; they are not
-// endorsements and should be rewritten when the lead decides the rule.
+// Bugs B1-B5 found in the tester round are fixed; their tests ("Was CONFIRMED BUG ...") assert the
+// fixed behaviour. The former spec-question block now asserts the lead's decisions 1 and 2
+// (docs/design/m1-2-data-model.md, "Lead decisions after the tester round"). The repository runs
+// as vault_app (`appDb`), like web and worker; `db` is the owner, for setup and raw checks.
 let db: Kysely<Database>; // as vault_migrator (owner): setup and raw checks
 let appDb: Kysely<Database>; // as vault_app: the repository, as web and worker run it
 let drop: () => Promise<void>;

@@ -11,11 +11,9 @@ import { freshDatabase } from "./support/fresh-database.ts";
 
 // Tester (M1.2): tampering with the audit log, retention boundaries, and what the
 // database role can and cannot do. `url` connects as vault_migrator (the owner, like the migrate
-// service); `appUrl` as vault_app (like web and worker). Design note: "audit_log is append-only: a trigger raises on
-// UPDATE and DELETE, except a retention function"; "2 years" and "90 days"; "details never hold
-// values"; "ip_prefix: /24 or /48, only on sign-in events".
-//
-// `it.fails` marks a CONFIRMED BUG (see the report); it goes red when fixed so the marker is removed.
+// service); `appUrl` as vault_app (like web and worker). Design note: "audit_log is append-only: a
+// trigger raises on UPDATE and DELETE, except a retention function"; "2 years" and "90 days";
+// "details never hold values"; "ip_prefix: /24 or /48, only on the sign-in events" (decision 4).
 let db: Kysely<Database>;
 let drop: () => Promise<void>;
 let url: string;
