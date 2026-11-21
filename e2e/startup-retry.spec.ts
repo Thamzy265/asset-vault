@@ -22,9 +22,10 @@ test("worker retries for about 60 s with capped backoff, then exits 1 without pr
   expect(seconds).toBeLessThan(75);
   expect(output).not.toContain(SECRET);
 
-  const lines = output.trim().split("\n").map((l) => JSON.parse(l) as { msg: string; delayMs?: number; level: string });
+  const lines = output.trim().split("\n").map((l) => JSON.parse(l) as { msg: string; delayMs?: number; level: string; code?: string });
   const retries = lines.filter((l) => l.msg === "database not reachable, retrying");
   expect(retries.length).toBeGreaterThan(10); // many attempts, not one long sleep
   for (const r of retries) expect(r.delayMs).toBeLessThanOrEqual(5_000); // capped
+  for (const r of retries) expect(r.code).toBe("ECONNREFUSED"); // the reason, as a code only (reviewer L3)
   expect(lines.at(-1)).toMatchObject({ level: "error", msg: "worker failed to start" });
 });

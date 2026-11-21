@@ -1,4 +1,4 @@
-import { createDb, log, pingDatabase, waitForDatabase } from "@vault/db";
+import { createDb, log, waitForDatabaseReady } from "@vault/db";
 import { startupCheck } from "./server/startup.ts";
 
 /** Node.js-only start-up work, loaded from instrumentation.ts. */
@@ -12,9 +12,7 @@ export function runNodeStartup(): void {
     wait: async (databaseUrl) => {
       const db = createDb(databaseUrl, { maxConnections: 1 });
       try {
-        await waitForDatabase(() => pingDatabase(db), {
-          onRetry: ({ attempt, delayMs }) => log("warn", "database not reachable, retrying", { attempt, delayMs }),
-        });
+        await waitForDatabaseReady(db);
       } finally {
         await db.destroy();
       }

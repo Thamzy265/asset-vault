@@ -54,3 +54,32 @@ describe("waitForDatabase", () => {
     expect(seen).toEqual([{ attempt: 1, delayMs: 500 }, { attempt: 2, delayMs: 1000 }]);
   });
 });
+
+function pgError(code: string, message: string): Error {
+  return Object.assign(new Error(message), { code });
+}
+
+describe("waitForDatabase failure reasons (reviewer L3)", () => {
+  it.each(["28P01", "28000", "3D000"])("fails at once on %s (retrying can't fix a wrong password or database name)", async (code) => {
+    const clock = fakeClock();
+    let calls = 0;
+    const attempt = waitForDatabase(async () => {
+      calls++;
+      throw pgError(code, "password authentication failed for user \"vault\"");
+    }, clock);
+    await expect(attempt).rejects.toBeInstanceOf(DatabaseUnavailableError);
+    await expect(attempt).rejects.toThrow(code);
+    expect(calls).toBe(1);
+    expect(clock.sleeps).toEqual([]);
+  });
+
+  it("passes the error code (not the message) to onRetry", async () => {
+    const clock = fakeClock();
+    const seen: unknown[] = [];
+    let calls = 0;
+    await waitForDatabase(async () => {
+      if (++calls < 3) throw pgError(calls === 1 ? "ECONNREFUSED" : "57P03", "the database system is starting up");
+    }, { ...clock, jitter: () => 1, onRetry: (info) => seen.push(info.code) });
+    expect(seen).toEqual(["ECONNREFUSED", "57P03"]);
+  });
+});

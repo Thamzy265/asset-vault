@@ -1,12 +1,4 @@
-import {
-  createDb,
-  log,
-  migrateUp,
-  pingDatabase,
-  recordHeartbeat,
-  waitForDatabase,
-  type WaitOptions,
-} from "@vault/db";
+import { createDb, log, migrateUp, recordHeartbeat, waitForDatabaseReady, type WaitOptions } from "@vault/db";
 import { PgBoss } from "pg-boss";
 import { HEARTBEAT_CRON, HEARTBEAT_QUEUE, runHeartbeat } from "./heartbeat-job.ts";
 
@@ -24,15 +16,13 @@ export type RunningWorker = {
 /**
  * Waits for Postgres (backoff, ~60 s), applies pending migrations, starts
  * pg-boss and schedules the heartbeat. Throws DatabaseUnavailableError if
- * Postgres never answers, so main() can exit non-zero.
+ * Postgres never answers, or at once if it refuses the credentials or
+ * database name, so main() can exit non-zero.
  */
 export async function startWorker(options: WorkerOptions): Promise<RunningWorker> {
   const db = createDb(options.databaseUrl, { maxConnections: 2 });
   try {
-    await waitForDatabase(() => pingDatabase(db), {
-      ...options.wait,
-      onRetry: ({ attempt, delayMs }) => log("warn", "database not reachable, retrying", { attempt, delayMs }),
-    });
+    await waitForDatabaseReady(db, options.wait);
     const applied = await migrateUp(db);
     log("info", "migrations applied", { migrations: applied });
   } catch (error) {

@@ -1,8 +1,19 @@
+import { errorCode } from "./log.ts";
+
 export class DatabaseUnavailableError extends Error {
   override name = "DatabaseUnavailableError";
 }
 
-export type RetryInfo = { attempt: number; delayMs: number; error: unknown };
+/** Wrong password (28P01), no such role or not allowed (28000), no such database (3D000). */
+const FATAL_CODES = new Set(["28P01", "28000", "3D000"]);
+
+export type RetryInfo = {
+  attempt: number;
+  delayMs: number;
+  error: unknown;
+  /** pg or Node error code (e.g. ECONNREFUSED, 57P03). Safe to log; the error itself is not. */
+  code?: string;
+};
 
 export type WaitOptions = {
   timeoutMs?: number;
@@ -19,6 +30,8 @@ export type WaitOptions = {
  * Calls `check` until it resolves, with capped exponential backoff and
  * jitter. Throws DatabaseUnavailableError once `timeoutMs` (default 60 s)
  * has passed, so the process can exit non-zero and Compose restarts it.
+ * Throws at once on a wrong password, role or database name: retrying
+ * can't fix those.
  */
 export async function waitForDatabase(check: () => Promise<void>, options: WaitOptions = {}): Promise<void> {
   const {
@@ -37,6 +50,12 @@ export async function waitForDatabase(check: () => Promise<void>, options: WaitO
       await check();
       return;
     } catch (error) {
+      const code = errorCode(error);
+      if (code && FATAL_CODES.has(code)) {
+        throw new DatabaseUnavailableError(`Database refused the connection (${code}); check DATABASE_URL`, {
+          cause: error,
+        });
+      }
       const remaining = deadline - now();
       if (remaining <= 0) {
         throw new DatabaseUnavailableError(
@@ -46,7 +65,7 @@ export async function waitForDatabase(check: () => Promise<void>, options: WaitO
       }
       const backoff = Math.min(initialDelayMs * 2 ** (attempt - 1), maxDelayMs);
       const delayMs = Math.min(Math.round(backoff * jitter()), remaining);
-      onRetry?.({ attempt, delayMs, error });
+      onRetry?.({ attempt, delayMs, error, ...(code && { code }) });
       await sleep(delayMs);
     }
   }
