@@ -3,7 +3,10 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { migrations } from "../src/migrations/index.ts";
 import { freshDatabase } from "./support/fresh-database.ts";
+
+const names = Object.keys(migrations);
 
 const run = promisify(execFile);
 const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
@@ -34,13 +37,13 @@ describe("db CLI (pnpm db:migrate / db:rollback)", () => {
     const result = await runCli(["up"], { DATABASE_URL: url });
     expect(result.code).toBe(0);
     const line = JSON.parse(result.stdout.trim().split("\n").at(-1) ?? "{}");
-    expect(line).toMatchObject({ level: "info", msg: "migrations applied", migrations: ["0001_meta"] });
+    expect(line).toMatchObject({ level: "info", msg: "migrations applied", migrations: names });
   });
 
   it("`down` reverts the latest migration", async () => {
     const result = await runCli(["down"], { DATABASE_URL: url });
     expect(result.code).toBe(0);
-    expect(result.stdout).toContain('"migrations":["0001_meta"]');
+    expect(result.stdout).toContain(`"migrations":["${names.at(-1)}"]`);
   });
 
   it("exits non-zero with a clear message when DATABASE_URL is missing", async () => {

@@ -1,5 +1,7 @@
 import type { Migration } from "kysely/migration";
 import * as m0001 from "./0001_meta.ts";
+import * as m0002 from "./0002_people_users.ts";
+import * as m0003 from "./0003_audit_log.ts";
 
 /**
  * Every migration, in order. Each one exports an explicit `up` and `down`.
@@ -8,4 +10,6 @@ import * as m0001 from "./0001_meta.ts";
  */
 export const migrations: Record<string, Migration> = {
   "0001_meta": m0001,
+  "0002_people_users": m0002,
+  "0003_audit_log": m0003,
 };
