@@ -216,6 +216,21 @@ describe("raw database access bypasses stay closed in apps/**", () => {
     }
   });
 
+  // Review N1: guardrail against listing globalThis's symbol keys (production keeps no map there at all).
+  it("Object.getOwnPropertySymbols, Reflect.ownKeys and Object.getOwnPropertyDescriptors are rejected in apps/**", async () => {
+    for (const code of [
+      "const keys = Object.getOwnPropertySymbols(globalThis);",
+      "const keys = Reflect.ownKeys(globalThis);",
+      "const all = Object.getOwnPropertyDescriptors(globalThis);",
+      'const keys = Object["getOwnPropertySymbols"](globalThis);',
+      'const keys = Reflect["ownKeys"](globalThis);',
+      "const { getOwnPropertySymbols: f } = Object;",
+      "const { ownKeys } = Reflect;",
+    ]) {
+      for (const file of [SRC, "apps/worker/src/worker.ts", TEST]) expect(await restricted(code, file), `${file}: ${code}`).not.toEqual([]);
+    }
+  });
+
   it("the web app's own getDb() (an opaque handle) is still allowed as a plain call", async () => {
     expect(await restricted('import { getDb } from "../../../../server/db.ts";\nexport const h = () => getDb();', "apps/web/src/app/api/v1/health/route.ts")).toEqual([]);
   });

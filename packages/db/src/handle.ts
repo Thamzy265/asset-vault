@@ -12,19 +12,26 @@ import type { Database } from "./schema.ts";
 export type DbHandle = { readonly kind: "vault-db" };
 
 /**
- * Handle -> client. Kept on globalThis under a registered symbol (review L7):
- * `next dev` re-evaluates this module on reload, and the web app keeps its
- * handle across reloads (apps/web/src/server/db.ts), so a module-local map
- * would stop resolving it. Not enumerable; apps may not use Symbol.for (lint),
- * and the database roles stay the backstop.
+ * Handle -> client.
+ * - Production (review N1): module-private. A symbol key on globalThis can
+ *   always be listed (Object.getOwnPropertySymbols, Reflect.ownKeys), and the
+ *   map would hand out the raw client, so production keeps none.
+ * - Development only (review L7): kept on globalThis under a registered
+ *   symbol, because `next dev` re-evaluates this module on reload while the
+ *   web app keeps its handle (apps/web/src/server/db.ts).
+ * The web and worker images set NODE_ENV=production (their Dockerfiles).
  */
-const CLIENTS_KEY = Symbol.for("@vault/db/clients");
 type ClientMap = WeakMap<DbHandle, Kysely<Database>>;
-const store = globalThis as typeof globalThis & { [CLIENTS_KEY]?: ClientMap };
-if (!store[CLIENTS_KEY]) {
-  Object.defineProperty(store, CLIENTS_KEY, { value: new WeakMap(), enumerable: false, writable: false, configurable: false });
+function clientMap(): ClientMap {
+  if (process.env.NODE_ENV === "production") return new WeakMap();
+  const key = Symbol.for("@vault/db/clients");
+  const store = globalThis as typeof globalThis & { [key: symbol]: ClientMap | undefined };
+  if (!store[key]) {
+    Object.defineProperty(store, key, { value: new WeakMap(), enumerable: false, writable: false, configurable: false });
+  }
+  return store[key]!;
 }
-const clients: ClientMap = store[CLIENTS_KEY]!;
+const clients: ClientMap = clientMap();
 
 /** A handle, or (inside packages/db and its tests) the client itself. */
 export type DbLike = DbHandle | Kysely<Database>;

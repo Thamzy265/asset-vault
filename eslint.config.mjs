@@ -11,6 +11,9 @@ const PG_BOSS_SQL_MESSAGE =
   "No pg-boss getDb()/executeSql() in apps: they run raw SQL with no visibility check. Use @vault/db's functions and repositories (review L3).";
 const SYMBOL_FOR_MESSAGE =
   "No Symbol.for in apps: registered symbols reach @vault/db's internal client map on globalThis (review L7).";
+const KEY_LISTER_MESSAGE =
+  "No Object.getOwnPropertySymbols, Object.getOwnPropertyDescriptors or Reflect.ownKeys in apps: they list globalThis's symbol keys (review N1).";
+const KEY_LISTERS = { object: "/^(getOwnPropertySymbols|getOwnPropertyDescriptors)$/" };
 const LOADER_MESSAGE =
   "Apps load modules with static imports or literal import() only (no require, createRequire or node:module), so the no-raw-database rule can see every module they use.";
 
@@ -73,6 +76,13 @@ function noRawDatabaseAccess({ testFiles, allowPgBoss = false }) {
       { selector: "MemberExpression[object.name='Symbol'][property.name='for']", message: SYMBOL_FOR_MESSAGE },
       { selector: "MemberExpression[object.name='Symbol'][property.value='for']", message: SYMBOL_FOR_MESSAGE },
       { selector: "VariableDeclarator[init.name='Symbol'] > ObjectPattern > Property[key.name='for']", message: SYMBOL_FOR_MESSAGE },
+      // ...and nothing lists globalThis's symbol keys (review N1; production keeps no map there).
+      { selector: `MemberExpression[object.name='Object'][property.name=${KEY_LISTERS.object}]`, message: KEY_LISTER_MESSAGE },
+      { selector: `MemberExpression[object.name='Object'][property.value=${KEY_LISTERS.object}]`, message: KEY_LISTER_MESSAGE },
+      { selector: `VariableDeclarator[init.name='Object'] > ObjectPattern > Property[key.name=${KEY_LISTERS.object}]`, message: KEY_LISTER_MESSAGE },
+      { selector: "MemberExpression[object.name='Reflect'][property.name='ownKeys']", message: KEY_LISTER_MESSAGE },
+      { selector: "MemberExpression[object.name='Reflect'][property.value='ownKeys']", message: KEY_LISTER_MESSAGE },
+      { selector: "VariableDeclarator[init.name='Reflect'] > ObjectPattern > Property[key.name='ownKeys']", message: KEY_LISTER_MESSAGE },
       { selector: "ImportExpression[source.value=/^(node:)?module$/]", message: LOADER_MESSAGE },
       // CommonJS loaders (L3).
       { selector: "CallExpression[callee.name='require']", message: LOADER_MESSAGE },
