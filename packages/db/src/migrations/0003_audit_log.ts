@@ -4,7 +4,7 @@ import { sql, type Kysely } from "kysely";
  * Append-only audit log (design note M1.2). A trigger refuses UPDATE, DELETE
  * and TRUNCATE. The one exception is audit_log_retention(), run nightly by the
  * worker: it deletes rows older than 2 years and clears ip_prefix after 90
- * days. The trigger checks those rules itself too, so setting the retention
+ * days, then deletes deactivated users with no audit rows left (decision 8). The trigger checks those rules itself too, so setting the retention
  * flag by hand can't remove or edit anything retention wouldn't.
  */
 export const AUDIT_ACTIONS = [
@@ -31,7 +31,9 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     .createTable("audit_log")
     .addColumn("id", "bigint", (c) => c.primaryKey().generatedAlwaysAsIdentity())
     .addColumn("at", "timestamptz", (c) => c.notNull().defaultTo(sql`now()`))
-    .addColumn("actor_user_id", "uuid", (c) => c.references("users.id"))
+    // RESTRICT on purpose (decision 8): a user who appears in the log is deactivated, not
+    // deleted; retention deletes the user row once its last audit row has expired.
+    .addColumn("actor_user_id", "uuid", (c) => c.references("users.id").onDelete("restrict"))
     .addColumn("action", "text", (c) => c.notNull().check(sql`action in (${list(AUDIT_ACTIONS)})`))
     .addColumn("entity_type", "text", (c) => c.check(sql`entity_type ~ '^[a-z][a-z_]{0,49}$'`))
     .addColumn("entity_id", "uuid")
@@ -95,7 +97,7 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     for each statement execute function audit_log_guard()`.execute(db);
 
   await sql`
-    create function audit_log_retention(out deleted bigint, out ip_prefixes_cleared bigint)
+    create function audit_log_retention(out deleted bigint, out ip_prefixes_cleared bigint, out users_deleted bigint)
     language plpgsql as $$
     begin
       perform set_config('vault.audit_retention', 'on', true);
@@ -104,6 +106,10 @@ export async function up(db: Kysely<unknown>): Promise<void> {
       update audit_log set ip_prefix = null where ip_prefix is not null and at < now() - interval '90 days';
       get diagnostics ip_prefixes_cleared = row_count;
       perform set_config('vault.audit_retention', 'off', true);
+      delete from users u
+        where u.deactivated_at is not null
+          and not exists (select 1 from audit_log a where a.actor_user_id = u.id);
+      get diagnostics users_deleted = row_count;
     end $$`.execute(db);
 }
 

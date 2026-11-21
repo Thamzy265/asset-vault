@@ -254,8 +254,8 @@ describe("audit_log", () => {
     });
 
     it("a second run changes nothing", async () => {
-      const { rows } = await sql<{ deleted: string; ip_prefixes_cleared: string }>`select * from audit_log_retention()`.execute(db);
-      expect(rows[0]).toEqual({ deleted: "0", ip_prefixes_cleared: "0" });
+      const { rows } = await sql<{ deleted: string; ip_prefixes_cleared: string; users_deleted: string }>`select * from audit_log_retention()`.execute(db);
+      expect(rows[0]).toEqual({ deleted: "0", ip_prefixes_cleared: "0", users_deleted: "0" });
     });
 
     it("outside the retention function, even an expired row can't be deleted or an old ip_prefix cleared", async () => {

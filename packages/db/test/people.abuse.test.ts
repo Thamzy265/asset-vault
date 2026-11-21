@@ -580,17 +580,21 @@ describe("audit details: field names from a fixed list only, whatever the values
 });
 
 // ---------------------------------------------------------------------------
-// CONFIRMED BUG B3 (medium): audit_log.actor_user_id references users(id) with no ON DELETE action,
-// and the append-only trigger forbids setting it to null, so a user who ever created, changed or
-// even viewed a record cannot be deleted for two years. The design note says users.role/person_id
-// are kept "until the account is removed" and created_by/updated_by were given ON DELETE SET NULL
-// so accounts CAN be removed; the audit FK contradicts that.
+// Was CONFIRMED BUG B3 (medium). Decided (decision 8): users are deactivated, not deleted; the
+// audit FK is ON DELETE RESTRICT on purpose, and the retention job deletes a deactivated user once
+// their last audit row has expired (audit-retention.test.ts).
 describe("removing a login", () => {
-  it.fails("B3: a user who has viewed or changed a person can be deleted (account removal is possible while audit rows exist)", async () => {
-    const leaver = await user("member", null);
+  it("B3: deleting a user who has audit rows is refused (the audit FK is ON DELETE RESTRICT on purpose), and the rows keep their actor", async () => {
+    const leaver = await user("admin", null);
     const p = await people.create(leaver, { displayName: "Created by a leaver" });
     await people.get(leaver, p.id);
-    await expect(db.deleteFrom("users").where("id", "=", leaver.userId).execute()).resolves.toBeDefined();
+    await expect(db.deleteFrom("users").where("id", "=", leaver.userId).execute()).rejects.toMatchObject({ code: "23001" });
+    const actors = await db.selectFrom("audit_log").select("actor_user_id").where("entity_id", "=", p.id).execute();
+    expect(actors.map((a) => a.actor_user_id)).toEqual([leaver.userId, leaver.userId]);
+    const fk = await sql<{ confdeltype: string }>`
+      select confdeltype from pg_constraint where conrelid = 'audit_log'::regclass and contype = 'f' and conkey = array[(
+        select attnum from pg_attribute where attrelid = 'audit_log'::regclass and attname = 'actor_user_id')]::int2[]`.execute(db);
+    expect(fk.rows).toEqual([{ confdeltype: "r" }]);
   });
 
   it("a user with no audit rows can be deleted, and the records they created keep existing with created_by set to null", async () => {

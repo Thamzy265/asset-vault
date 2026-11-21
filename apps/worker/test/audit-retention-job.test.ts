@@ -10,10 +10,10 @@ describe("audit retention job (M1.2)", () => {
   it("calls the retention function and logs the counts only", async () => {
     const logged: Array<[string, Record<string, unknown>]> = [];
     await runAuditRetentionJob({
-      retain: async () => ({ deleted: 3, ipPrefixesCleared: 7 }),
+      retain: async () => ({ deleted: 3, ipPrefixesCleared: 7, usersDeleted: 1 }),
       log: (msg, fields) => logged.push([msg, fields]),
     });
-    expect(logged).toEqual([["audit retention", { deleted: 3, ipPrefixesCleared: 7 }]]);
+    expect(logged).toEqual([["audit retention", { deleted: 3, ipPrefixesCleared: 7, usersDeleted: 1 }]]);
   });
 
   it("lets a failure reject so pg-boss retries the job", async () => {

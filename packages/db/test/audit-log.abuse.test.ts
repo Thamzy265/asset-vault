@@ -479,7 +479,7 @@ describe("migration 0003 rollback", () => {
       expect(await own.selectFrom("audit_log").select("id").execute()).toEqual([]);
       await own.insertInto("audit_log").values({ action: "view", entity_type: "person", entity_id: person.id }).execute();
       await expect(own.updateTable("audit_log").set({ action: "create" }).execute()).rejects.toMatchObject({ code: "42501" });
-      await expect(runAuditRetention(own)).resolves.toEqual({ deleted: 0, ipPrefixesCleared: 0 });
+      await expect(runAuditRetention(own)).resolves.toEqual({ deleted: 0, ipPrefixesCleared: 0, usersDeleted: 0 });
     } finally {
       await own.destroy();
       await fresh.drop();

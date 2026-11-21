@@ -80,6 +80,9 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     )
     .addColumn("created_at", "timestamptz", (c) => c.notNull().defaultTo(sql`now()`))
     .addColumn("updated_at", "timestamptz", (c) => c.notNull().defaultTo(sql`now()`))
+    // Decision 8: users are deactivated, not deleted, while the audit log names them;
+    // the nightly retention job deletes the row once their last audit row has expired.
+    .addColumn("deactivated_at", "timestamptz")
     .execute();
   await addUpdatedAtTrigger(db, "users");
 

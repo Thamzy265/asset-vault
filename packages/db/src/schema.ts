@@ -37,6 +37,8 @@ export interface UsersTable {
   role: Generated<Role>;
   created_at: ColumnType<Date, never, never>;
   updated_at: ColumnType<Date, never, never>;
+  /** Set when the login is removed (decision 8); the row is deleted once its last audit row expires. */
+  deactivated_at: ColumnType<Date | null, Date | null | undefined, Date | null>;
 }
 
 /** Names of changed fields only, never their values. */

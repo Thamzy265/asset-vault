@@ -5,7 +5,7 @@ export const AUDIT_RETENTION_QUEUE = "audit-retention";
 export const AUDIT_RETENTION_CRON = "15 3 * * *";
 
 export type AuditRetentionDeps = {
-  /** Deletes audit rows older than 2 years and clears ip_prefix after 90 days. */
+  /** Deletes audit rows older than 2 years, clears ip_prefix after 90 days, deletes expired deactivated users. */
   retain: () => Promise<AuditRetentionResult>;
   log: (msg: string, fields: Record<string, unknown>) => void;
 };
@@ -13,5 +13,5 @@ export type AuditRetentionDeps = {
 /** Runs the retention function and logs the counts. A failure rejects so pg-boss retries the job. */
 export async function runAuditRetentionJob(deps: AuditRetentionDeps): Promise<void> {
   const result = await deps.retain();
-  deps.log("audit retention", { deleted: result.deleted, ipPrefixesCleared: result.ipPrefixesCleared });
+  deps.log("audit retention", { deleted: result.deleted, ipPrefixesCleared: result.ipPrefixesCleared, usersDeleted: result.usersDeleted });
 }
