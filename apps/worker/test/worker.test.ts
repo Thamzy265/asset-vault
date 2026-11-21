@@ -3,9 +3,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { freshDatabase } from "../../../packages/db/test/support/fresh-database.ts";
 import { migrateUp } from "../../../packages/db/test/support/migrate.ts";
 import { rawQuery } from "../../../packages/db/test/support/raw-sql.ts";
+import { throughSilentProxy } from "../../../packages/db/test/support/silent-proxy.ts";
 import { AUDIT_RETENTION_CRON, AUDIT_RETENTION_QUEUE } from "../src/audit-retention-job.ts";
 import { HEARTBEAT_QUEUE } from "../src/heartbeat-job.ts";
-import { startWorker, type RunningWorker } from "../src/worker.ts";
+import { BOSS_TIMEOUTS, startWorker, type RunningWorker } from "../src/worker.ts";
 
 // As in Compose: migrations run as vault_migrator (url), the worker runs as vault_app (appUrl).
 describe("startWorker (real Postgres)", () => {
@@ -87,4 +88,39 @@ describe("startWorker (real Postgres)", () => {
       }),
     ).rejects.toBeInstanceOf(DatabaseUnavailableError);
   });
+});
+
+// Review L4: pg-boss's own pool needs a client query_timeout (and TCP keepalive), or a
+// connection that goes silent hangs every job fetch for good. statement_timeout stays below
+// it (design note M1.2, N1) so Postgres cancels a slow statement first.
+describe("the pg-boss pool when Postgres stops answering (review L4)", () => {
+  it("keeps statement_timeout (55 s) below the client query_timeout (60 s), with keepalive on", () => {
+    expect(BOSS_TIMEOUTS).toEqual({ statementMs: 55_000, queryMs: 60_000, keepAlive: true });
+  });
+
+  it("a pg-boss query on a silent connection rejects after query_timeout instead of hanging", async () => {
+    const fresh = await freshDatabase();
+    const migrating = openDatabase(fresh.url);
+    await migrateUp(migrating);
+    await closeDatabase(migrating);
+    const { url: proxied, proxy } = await throughSilentProxy(fresh.appUrl);
+    // Short limits so the test is quick; the defaults are checked above.
+    const started = await startWorker({ databaseUrl: proxied, bossTimeouts: { statementMs: 1_500, queryMs: 2_000 } });
+    try {
+      await started.boss.getQueue(HEARTBEAT_QUEUE); // the pool's connections are open and answering
+      proxy.freeze();
+      const t0 = Date.now();
+      const outcome = await Promise.race([
+        started.boss.getQueue(HEARTBEAT_QUEUE).then(() => "resolved", () => "rejected"),
+        new Promise<string>((resolve) => setTimeout(() => resolve("still pending after 8 s"), 8_000)),
+      ]);
+      expect(outcome).toBe("rejected");
+      expect(Date.now() - t0).toBeLessThan(4_000);
+    } finally {
+      // Don't wait on a graceful stop through a silent proxy.
+      await proxy.close();
+      void started.stop().catch(() => {});
+      await fresh.drop().catch(() => {});
+    }
+  }, 20_000);
 });

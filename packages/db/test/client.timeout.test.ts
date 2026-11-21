@@ -1,36 +1,8 @@
-import { createServer, Socket, type AddressInfo, type Server } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sql } from "kysely";
 import { createDb, createMigrationDb, MIGRATION_TIMEOUTS, pingDatabase, POOL_TIMEOUTS } from "../src/client.ts";
 import { freshDatabase } from "./support/fresh-database.ts";
-
-/**
- * A TCP proxy to the test Postgres that can go silent: after `freeze()` it keeps
- * every connection open but forwards nothing, like `docker pause postgres` or a
- * dropped network path. Reviewer finding L2.
- */
-function silentProxy(target: { host: string; port: number }) {
-  let frozen = false;
-  const sockets = new Set<Socket>();
-  const server: Server = createServer((client) => {
-    const upstream = new Socket();
-    upstream.connect(target.port, target.host);
-    for (const s of [client, upstream]) {
-      sockets.add(s);
-      s.on("error", () => {});
-    }
-    client.on("data", (d) => void (frozen || upstream.write(d)));
-    upstream.on("data", (d) => void (frozen || client.write(d)));
-  });
-  return {
-    listen: () => new Promise<number>((resolve) => server.listen(0, "127.0.0.1", () => resolve((server.address() as AddressInfo).port))),
-    freeze: () => (frozen = true),
-    close: () => {
-      for (const s of sockets) s.destroy();
-      return new Promise<void>((resolve) => server.close(() => resolve()));
-    },
-  };
-}
+import { silentProxy } from "./support/silent-proxy.ts";
 
 describe("pingDatabase when Postgres stops answering on an open connection (reviewer L2)", () => {
   let drop: () => Promise<void>;

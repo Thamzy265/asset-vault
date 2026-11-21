@@ -1,12 +1,26 @@
 import { closeDatabase, log, openDatabase, recordHeartbeat, runAuditRetention, waitForDatabaseReady, type WaitOptions } from "@vault/db";
-import { PgBoss } from "pg-boss";
+import { PgBoss, type ConstructorOptions } from "pg-boss";
 import { AUDIT_RETENTION_CRON, AUDIT_RETENTION_QUEUE, runAuditRetentionJob } from "./audit-retention-job.ts";
 import { HEARTBEAT_CRON, HEARTBEAT_QUEUE, runHeartbeat } from "./heartbeat-job.ts";
+
+/**
+ * pg-boss's own pool (review L4). pg-boss spreads its config into pg.Pool
+ * (pg-boss 12, dist/db.js), so these reach every connection: query_timeout
+ * stops a job fetch hanging on a connection that went silent, keepAlive
+ * notices a dropped path, and statement_timeout stays below query_timeout so
+ * Postgres cancels a slow statement first (design note M1.2, N1).
+ */
+export const BOSS_TIMEOUTS = { statementMs: 55_000, queryMs: 60_000, keepAlive: true } as const;
+
+/** pg.Pool settings pg-boss passes through but does not declare. */
+type BossConfig = ConstructorOptions & { statement_timeout: number; query_timeout: number; keepAlive: boolean };
 
 export type WorkerOptions = {
   databaseUrl: string;
   /** Override start-up retry timing (tests only); defaults to ~60 s. */
   wait?: Pick<WaitOptions, "timeoutMs" | "initialDelayMs">;
+  /** Override the pg-boss pool limits (tests only); defaults to BOSS_TIMEOUTS. */
+  bossTimeouts?: { statementMs: number; queryMs: number };
 };
 
 export type RunningWorker = {
@@ -32,7 +46,16 @@ export async function startWorker(options: WorkerOptions): Promise<RunningWorker
 
   // The pgboss schema comes from migration 0004: the app role may create pg-boss's tables
   // in it but can't create schemas (design note M1.2, decision 3).
-  const boss = new PgBoss({ connectionString: options.databaseUrl, max: 3, createSchema: false });
+  const timeouts = options.bossTimeouts ?? BOSS_TIMEOUTS;
+  const config: BossConfig = {
+    connectionString: options.databaseUrl,
+    max: 3,
+    createSchema: false,
+    statement_timeout: timeouts.statementMs,
+    query_timeout: timeouts.queryMs,
+    keepAlive: BOSS_TIMEOUTS.keepAlive,
+  };
+  const boss = new PgBoss(config);
   boss.on("error", (error) => log("error", "pg-boss error", { error: error.message }));
   await boss.start();
   await boss.createQueue(HEARTBEAT_QUEUE);
