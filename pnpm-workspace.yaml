@@ -1,0 +1,12 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Native build scripts are not needed: optional SSH/CPU helpers pulled in by
+# testcontainers, and image tooling Next.js does not use here.
+allowBuilds:
+  cpu-features: false
+  protobufjs: false
+  ssh2: false
+  sharp: false
+  unrs-resolver: false
