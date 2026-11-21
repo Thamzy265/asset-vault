@@ -1,11 +1,6 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import type { TestProject } from "vitest/node";
-
-declare module "vitest" {
-  export interface ProvidedContext {
-    adminDatabaseUrl: string;
-  }
-}
+import "./fresh-database.ts";
 
 // Same image as docker-compose.yml. Set TEST_DATABASE_URL to use an existing
 // throwaway server instead of starting a container.

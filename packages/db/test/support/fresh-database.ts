@@ -2,6 +2,12 @@ import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { inject } from "vitest";
 
+declare module "vitest" {
+  export interface ProvidedContext {
+    adminDatabaseUrl: string;
+  }
+}
+
 /** Creates an empty, uniquely named database and returns its URL and a drop function. */
 export async function freshDatabase(): Promise<{ url: string; drop: () => Promise<void> }> {
   const adminUrl = inject("adminDatabaseUrl");
