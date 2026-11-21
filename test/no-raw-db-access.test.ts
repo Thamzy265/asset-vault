@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -67,6 +68,130 @@ describe("no raw database access outside packages/db", () => {
       expect(Object.values(handle).some((v) => typeof v === "object" && v !== null)).toBe(false);
     } finally {
       void publicApi.closeDatabase(handle);
+    }
+  });
+});
+
+// Tester round L1-L7 (M1.2). The DB roles are the real backstop (decision 3); this rule is the guardrail.
+describe("raw database access bypasses stay closed in apps/**", () => {
+  const SRC = "apps/web/src/server/x.ts";
+  const TEST = "apps/web/test/x.test.ts";
+
+  it("dynamic import specifiers must be plain string literals (L1, L2)", async () => {
+    for (const code of [
+      "const m = 'kysely'; await import(m);",
+      "await import(`kysely`);",
+      "await import(`${'ky'}sely`);",
+      'await import("ky" + "sely");',
+      'await import(["kysely"].join(""));',
+      "await import(String.raw`kysely`);",
+    ]) {
+      expect(await restricted(code, SRC), code).not.toEqual([]);
+    }
+  });
+
+  it("require, createRequire, module.require, process.getBuiltinModule and node:module are rejected (L3)", async () => {
+    for (const code of [
+      'const k = require("kysely");',
+      'import { createRequire } from "node:module";',
+      'import { createRequire } from "module";',
+      'import * as m from "node:module";',
+      'const m = await import("node:module");',
+      "const r = module.require;",
+      'const r = process.getBuiltinModule("module").createRequire(import.meta.url);',
+      'const { createRequire: cr } = process.getBuiltinModule("node:module");',
+      'const r = globalThis["require"];',
+      'import k = require("kysely");',
+    ]) {
+      expect(await restricted(code, code.includes("import k =") ? SRC : "apps/worker/src/x.ts"), code).not.toEqual([]);
+    }
+  });
+
+  it("file:, data: and package #subpath specifiers are rejected (they can name any file or module)", async () => {
+    for (const code of [
+      'import x from "file:///repo/packages/db/src/handle.ts";',
+      'import x from "file:///repo/pack%61ges/db/src/handle.ts";',
+      'await import("data:text/javascript,export default 1");',
+      'import k from "#db";',
+    ]) {
+      expect(await restricted(code, SRC), code).not.toEqual([]);
+    }
+  });
+
+  it("app production code can't reach any path under packages/ or node_modules, however it is spelled (L4, L6)", async () => {
+    for (const spec of [
+      "../../../../packages/db/./src/handle.ts",
+      "../../../../packages/db//src/handle.ts",
+      "../../../../packages/db/../db/src/handle.ts",
+      "../../../../packages/./db/src/handle.ts",
+      "../../../../Packages/DB/src/handle.ts",
+      "../../../../apps/../packages/db/src/handle.ts",
+      "../../../../packages/db/test/support/raw-sql.ts",
+      "../../../../packages/db/test/support/fresh-database.ts",
+      "../../../../packages/db",
+      "../../node_modules/@vault/db/src/handle.ts",
+      "../../../../node_modules/.pnpm/kysely@0.29.9/node_modules/kysely/dist/esm/index.js",
+      "/abs/repo/packages/db/src/handle.ts",
+    ]) {
+      expect(await restricted(`import x from "${spec}";`, SRC), spec).not.toEqual([]);
+      expect(await restricted(`export * from "${spec}";`, SRC), spec).not.toEqual([]);
+      expect(await restricted(`await import("${spec}");`, SRC), spec).not.toEqual([]);
+    }
+  });
+
+  it("app tests may use packages/db/test/support/*, but never packages/db/src or a path that leaves support (L4, L6)", async () => {
+    for (const spec of ["../../../packages/db/test/support/fresh-database.ts", "../../../packages/db/test/support/migrate.ts", "../../../packages/db/test/support/raw-sql.ts"]) {
+      expect(await restricted(`import x from "${spec}";`, TEST), spec).toEqual([]);
+    }
+    for (const spec of [
+      "../../../packages/db/src/handle.ts",
+      "../../../packages/db/./src/handle.ts",
+      "../../../packages/db/test/support/../../src/handle.ts",
+      "../../../packages/db/test/support/../support/../../src/handle.ts",
+      "../../../packages/db/test/people.test.ts",
+      "../../node_modules/kysely",
+    ]) {
+      expect(await restricted(`import x from "${spec}";`, TEST), spec).not.toEqual([]);
+    }
+  });
+
+  it("ordinary app imports are untouched", async () => {
+    for (const code of [
+      'import { openDatabase } from "@vault/db";',
+      'import pkg from "../../package.json" with { type: "json" };',
+      'import { getHealth } from "./health.ts";',
+      'import { NextResponse } from "next/server";',
+      'import { PgBoss } from "pg-boss";',
+      'import { readFileSync } from "node:fs";',
+      'const page = await import("./page.tsx");',
+    ]) {
+      expect(await restricted(code, SRC), code).toEqual([]);
+    }
+  });
+
+  it("inline ESLint config comments have no effect in apps/** (L5: linterOptions.noInlineConfig), and still work everywhere else", async () => {
+    const code = "// eslint-disable-next-line no-debugger\ndebugger;\n";
+    const ruleIds = async (file: string) => {
+      const [result] = await eslint.lintText(code, { filePath: path.join(repo, file) });
+      return (result?.messages ?? []).map((m) => m.ruleId);
+    };
+    expect(await ruleIds("apps/web/src/x.ts")).toContain("no-debugger");
+    expect(await ruleIds("apps/worker/test/x.test.ts")).toContain("no-debugger");
+    expect(await ruleIds("packages/db/src/x.ts")).not.toContain("no-debugger");
+    expect(await ruleIds("test/x.test.ts")).not.toContain("no-debugger");
+  });
+
+  it("every source file under apps/ is linted with the rule, whatever its extension (L7)", async () => {
+    const NOT_CODE = /\.(json|md|css|scss|svg|png|jpe?g|gif|ico|webp|txt|ya?ml|webmanifest|woff2?)$|(^|\/)(Dockerfile|\.gitignore|\.dockerignore)$/;
+    const tracked = execFileSync("git", ["ls-files", "apps"], { cwd: repo, encoding: "utf8" }).split("\n").filter(Boolean);
+    const synthetic = ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"].map((ext) => `apps/web/src/x.${ext}`);
+    const files = [...tracked.filter((f) => !NOT_CODE.test(f)), ...synthetic];
+    expect(files.length).toBeGreaterThan(synthetic.length);
+    for (const file of files) {
+      expect(await eslint.isPathIgnored(path.join(repo, file)), file).toBe(false);
+      const config = (await eslint.calculateConfigForFile(path.join(repo, file))) as { rules?: Record<string, unknown> };
+      expect(config.rules?.["no-restricted-imports"], file).toEqual(expect.arrayContaining([2]));
+      expect(config.rules?.["no-restricted-syntax"], file).toEqual(expect.arrayContaining([2]));
     }
   });
 });

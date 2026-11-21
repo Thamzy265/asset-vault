@@ -6,8 +6,8 @@ import * as publicApi from "../packages/db/src/index.ts";
 
 // Tester (M1.2): can raw database access sneak into apps/** past the ESLint rule?
 // Design note, top quality "Authorisation": "lint rule or test that forbids importing the raw
-// Kysely client outside packages/db". `it.fails` marks a CONFIRMED BYPASS (the assertion says it
-// SHOULD be rejected; it goes red when the rule is fixed, then remove the marker).
+// Kysely client outside packages/db". L1-L7 were CONFIRMED BYPASSES; they are closed now (the
+// assertions state what must happen, and the markers are gone).
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const eslint = new ESLint({ cwd: repo });
 
@@ -46,36 +46,36 @@ describe("rejected in every app file shape", () => {
   });
 });
 
-describe("CONFIRMED BYPASSES of the rule (the assertion states what SHOULD happen)", () => {
-  it.fails("L1: a template-literal dynamic import of kysely is rejected", async () => {
+describe("formerly confirmed bypasses L1-L7: rejected now", () => {
+  it("L1: a template-literal dynamic import of kysely is rejected", async () => {
     expect(await flagged("const k = await import(`kysely`);", "apps/web/src/x.ts")).toBe(true);
   });
 
-  it.fails("L2: a computed dynamic import (string concatenation) of kysely is rejected", async () => {
+  it("L2: a computed dynamic import (string concatenation) of kysely is rejected", async () => {
     expect(await flagged('const k = await import("ky" + "sely");', "apps/web/src/x.ts")).toBe(true);
   });
 
-  it.fails("L3: createRequire / require of kysely is rejected", async () => {
+  it("L3: createRequire / require of kysely is rejected", async () => {
     expect(await flagged('import { createRequire } from "node:module";\nconst k = createRequire(import.meta.url)("kysely");', "apps/worker/src/x.ts")).toBe(true);
     expect(await flagged('const k = require("kysely");', "apps/worker/src/x.js")).toBe(true);
   });
 
-  it.fails("L4: a path into packages/db/src that is not written canonically ('./src', '//src', '../db/src') is rejected", async () => {
+  it("L4: a path into packages/db/src that is not written canonically ('./src', '//src', '../db/src') is rejected", async () => {
     for (const spec of ["../../../../packages/db/./src/handle.ts", "../../../../packages/db//src/handle.ts", "../../../../packages/db/../db/src/handle.ts", "../../../../packages/./db/src/handle.ts"]) {
       expect(await flagged(`import x from "${spec}";`, "apps/web/src/server/x.ts"), spec).toBe(true);
     }
   });
 
-  it.fails("L5: an inline eslint-disable comment cannot silence the rule inside apps/**", async () => {
+  it("L5: an inline eslint-disable comment cannot silence the rule inside apps/**", async () => {
     expect(await flagged('// eslint-disable-next-line no-restricted-imports\nimport { Kysely } from "kysely";', "apps/web/src/x.ts")).toBe(true);
     expect(await flagged('/* eslint-disable */\nimport { Kysely } from "kysely";', "apps/web/src/x.ts")).toBe(true);
   });
 
-  it.fails("L6: the test-support raw SQL helper (packages/db/test/support/raw-sql.ts, pg inside) cannot be imported from app production code", async () => {
+  it("L6: the test-support raw SQL helper (packages/db/test/support/raw-sql.ts, pg inside) cannot be imported from app production code", async () => {
     expect(await flagged('import { rawQuery } from "../../../../packages/db/test/support/raw-sql.ts";', "apps/web/src/server/x.ts")).toBe(true);
   });
 
-  it.fails("L7: .mts, .cts and .jsx files under apps/** are covered as well", async () => {
+  it("L7: .mts, .cts and .jsx files under apps/** are covered as well", async () => {
     for (const file of ["apps/web/src/x.mts", "apps/worker/src/x.cts", "apps/web/src/x.jsx"]) {
       expect(await flagged('import { Kysely } from "kysely";', file), file).toBe(true);
     }

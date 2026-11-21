@@ -92,5 +92,5 @@ In this order, so no code runs against a schema it doesn't know:
 
 - `apps/web` — Next.js App Router app and JSON API under `/api/v1`
 - `apps/worker` — background jobs (pg-boss): a heartbeat every minute, audit log retention nightly at 03:15 UTC
-- `packages/db` — the only way to the database: migrations, config validation, and repositories that apply the visibility rule and write the audit log. Apps hold an opaque handle; ESLint forbids `kysely`, `pg` and `packages/db/src` imports in `apps/*`
+- `packages/db` — the only way to the database: migrations, config validation, and repositories that apply the visibility rule and write the audit log. Apps hold an opaque handle. In `apps/*`, ESLint forbids `kysely`, `pg`, any path into `packages/` or `node_modules` (app tests may use `packages/db/test/support/`), `require`/`createRequire`, and non-literal `import()`; inline `eslint-disable` comments have no effect there, so an exception goes in `eslint.config.mjs`. The database roles are the real limit: web and worker log in as `vault_app`
 - `e2e` — Playwright tests
