@@ -57,6 +57,31 @@ test.describe("health endpoint abuse and edge cases", () => {
     }
   });
 
+  // M1.1-T3 (ADR 0003): every /api/v1/* response is JSON, errors included.
+  test("unknown /api/v1 paths answer a JSON 404 with the stable error shape, for every method", async ({ request }) => {
+    const paths = ["/api/v1", "/api/v1/nope", "/api/v1/Health", "/api/v1/health/extra", "/api/v1/health%2f..%2f..%2fetc%2fpasswd", "/api/v1/a/b/c?x=1"];
+    for (const p of paths) {
+      for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]) {
+        const res = await request.fetch(p, { method, maxRedirects: 0 });
+        expect(res.status(), `${method} ${p}`).toBe(404);
+        expect(res.headers()["content-type"], `${method} ${p}`).toContain("application/json");
+        const text = await res.text();
+        expectClean(text);
+        expect(JSON.parse(text), `${method} ${p}`).toEqual({ error: { code: "not_found", message: expect.any(String) } });
+      }
+      const head = await request.fetch(p, { method: "HEAD", maxRedirects: 0 });
+      expect(head.status(), `HEAD ${p}`).toBe(404);
+    }
+  });
+
+  test("the JSON 404 does not reflect the requested path", async ({ request }) => {
+    const res = await request.get("/api/v1/reflectprobe%3Cscript%3E");
+    expect(res.status()).toBe(404);
+    const text = await res.text();
+    expect(text).not.toContain("reflectprobe");
+    expect(text).not.toContain("<script>");
+  });
+
   test("odd query strings are ignored and cannot change the answer", async ({ request }) => {
     const queries = [
       "?x=%00",
