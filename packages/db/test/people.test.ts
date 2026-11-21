@@ -198,9 +198,9 @@ describe("writes and their audit rows (AC4)", () => {
     expect((await people.get(bea, p.id)).displayName).toBe("Stays");
   });
 
-  it("a failed insert (over-length name) leaves no person and no audit row", async () => {
+  it("a failed insert (over-length relationship, refused by the database) leaves no person and no audit row", async () => {
     const audits = (await auditRows()).length;
-    await expect(people.create(bea, { displayName: "x".repeat(101) })).rejects.toMatchObject({ code: "23514" });
+    await expect(people.create(bea, { displayName: "Valid", relationship: "x".repeat(51) })).rejects.toMatchObject({ code: "23514" });
     expect((await auditRows()).length).toBe(audits);
   });
 });
@@ -296,5 +296,50 @@ describe("input checks at the repository boundary (B2, B4, B5)", () => {
     const privateOfBea = await people.create(admin, { displayName: "Case private", ownerPersonId: bea.personId, visibility: "private" });
     const upperBea: Viewer = { ...bea, userId: bea.userId.toUpperCase(), personId: bea.personId!.toUpperCase() };
     await expect(people.get(upperBea, privateOfBea.id.toUpperCase())).resolves.toMatchObject({ id: privateOfBea.id });
+  });
+});
+
+describe("name rules (decision 6, B1)", () => {
+  // Names the repository refuses that Postgres can store as text (no NUL, no lone surrogate):
+  // the database check must refuse them too, so a raw insert can't bypass the rule.
+  const refused = ["", "   ", "\t", "\u00a0", "\u200b", " \u200b ", "\u200e", "\ufe0f", "a\tb", "a\u007fb", "a\u0085b", "Ann\u202eabc", "\u2067Ann", "a".repeat(101), "\u{1f600}".repeat(101), "e\u0301".repeat(51)];
+  // Names the repository stores (already trimmed): the database check must accept them.
+  const stored = ["Jane", "x", "a".repeat(100), "\u{1f600}".repeat(100), "\u540d\u524d\u3000\u5168", "\u{1f468}\u200d\u{1f469}", "Anna \u05e2\u05d1 Anna", "a\u200bb"];
+
+  it("the repository refuses a bad name on create and update with a ValidationError naming displayName", async () => {
+    const p = await people.create(admin, { displayName: "Valid" });
+    for (const name of [...refused, "a\u0000b", "bad\ud800name"]) {
+      const created = await people.create(admin, { displayName: name }).catch((e: unknown) => e);
+      expect(created, JSON.stringify(name)).toBeInstanceOf(ValidationError);
+      expect((created as ValidationError).fields).toEqual(["displayName"]);
+      await expect(people.update(admin, p.id, { displayName: name }), JSON.stringify(name)).rejects.toBeInstanceOf(ValidationError);
+    }
+  });
+
+  it("the repository stores the trimmed name", async () => {
+    await expect(people.create(admin, { displayName: "\u3000 Trimmed \n" })).resolves.toMatchObject({ displayName: "Trimmed" });
+  });
+
+  it("the database check matches: a raw insert of a refused name fails (23514), of a stored name succeeds", async () => {
+    for (const name of refused) {
+      const result = await sql`insert into people (display_name) values (${name})`.execute(db).then(
+        () => "ok",
+        (e: { code?: string }) => e.code,
+      );
+      expect(result, JSON.stringify(name)).toBe("23514");
+    }
+    for (const name of stored) {
+      await expect(sql`insert into people (display_name) values (${name})`.execute(db), JSON.stringify(name)).resolves.toBeDefined();
+    }
+  });
+
+  it("the database refuses untrimmed names too (the repository never writes one)", async () => {
+    for (const name of [" Jane", "Jane ", "\u3000Jane", "Jane\u00a0", "\nJane"]) {
+      const result = await sql`insert into people (display_name) values (${name})`.execute(db).then(
+        () => "ok",
+        (e: { code?: string }) => e.code,
+      );
+      expect(result, JSON.stringify(name)).toBe("23514");
+    }
   });
 });

@@ -313,9 +313,9 @@ describe("transaction integrity and concurrency", () => {
     expect(await auditCount()).toBe(before + 1); // the one view row of the get above
   });
 
-  it("an update that violates a DB check (name too long) in a multi-field change applies none of the fields", async () => {
+  it("an update that violates a DB check (relationship too long) in a multi-field change applies none of the fields", async () => {
     const p = await people.create(carl, { displayName: "Atomic", relationship: "old" });
-    await expect(people.update(carl, p.id, { relationship: "new", displayName: "x".repeat(101) })).rejects.toMatchObject({ code: "23514" });
+    await expect(people.update(carl, p.id, { displayName: "New name", relationship: "x".repeat(51) })).rejects.toMatchObject({ code: "23514" });
     expect(await people.get(carl, p.id)).toMatchObject({ displayName: "Atomic", relationship: "old" });
   });
 
@@ -402,28 +402,28 @@ describe("transaction integrity and concurrency", () => {
 describe("name and relationship inputs", () => {
   const make = (displayName: string, extra: Partial<Parameters<typeof people.create>[1]> = {}) => people.create(carl, { displayName, ...extra });
 
-  it("length counts characters (code points), not bytes: 100 emoji (400 bytes) are accepted, 101 are refused at the database", async () => {
+  it("length counts characters (code points), not bytes: 100 emoji (400 bytes) are accepted, 101 are refused", async () => {
     const hundred = "😀".repeat(100);
     expect((await make(hundred)).displayName).toBe(hundred);
-    await expect(make("😀".repeat(101))).rejects.toMatchObject({ code: "23514" });
+    await expect(make("😀".repeat(101))).rejects.toBeInstanceOf(ValidationError);
   });
 
   it("100 vs 101 plain characters; 1 character; and the boundary for multi-byte letters (é as one code point)", async () => {
     expect((await make("a".repeat(100))).displayName).toHaveLength(100);
-    await expect(make("a".repeat(101))).rejects.toMatchObject({ code: "23514" });
+    await expect(make("a".repeat(101))).rejects.toBeInstanceOf(ValidationError);
     expect((await make("x")).displayName).toBe("x");
     expect((await make("é".repeat(100))).displayName).toHaveLength(100);
-    await expect(make("é".repeat(101))).rejects.toMatchObject({ code: "23514" });
+    await expect(make("é".repeat(101))).rejects.toBeInstanceOf(ValidationError);
   });
 
   it("a decomposed accent (e + U+0301) counts as two characters: 51 of them are 102 and are refused", async () => {
-    await expect(make("é".repeat(51))).rejects.toMatchObject({ code: "23514" });
+    await expect(make("é".repeat(51))).rejects.toBeInstanceOf(ValidationError);
     expect((await make("é".repeat(50))).displayName).toHaveLength(100);
   });
 
   it("an astral emoji family sequence (zero-width joiners) counts every code point: a 7-code-point family x 15 is refused", async () => {
     const family = "👨‍👩‍👧‍👦"; // 4 emoji + 3 ZWJ = 7 code points
-    await expect(make(family.repeat(15))).rejects.toMatchObject({ code: "23514" });
+    await expect(make(family.repeat(15))).rejects.toBeInstanceOf(ValidationError);
     expect((await make(family.repeat(14))).displayName).toBe(family.repeat(14));
   });
 
@@ -435,21 +435,27 @@ describe("name and relationship inputs", () => {
     }
   });
 
-  it("leading and trailing spaces are stored exactly as given (spec is silent on trimming) and are the same in get and list", async () => {
-    const created = await make("  Padded Name  ");
+  // Decision 6: the repository refuses a bad name (ValidationError) before the database is asked;
+  // the database check matches (people.test.ts "the database check matches").
+  it("leading and trailing Unicode whitespace is trimmed (decision 6), and the name is the same in get and list", async () => {
+    const created = await make("  Padded Name\u00a0\u3000");
+    expect(created.displayName).toBe("Padded Name");
     const got = await people.get(carl, created.id);
-    expect(got.displayName).toBe(created.displayName);
-    expect((await people.list(carl)).find((p) => p.id === created.id)?.displayName).toBe(created.displayName);
+    expect(got.displayName).toBe("Padded Name");
+    expect((await people.list(carl)).find((p) => p.id === created.id)?.displayName).toBe("Padded Name");
+    const renamed = await people.update(carl, created.id, { displayName: "\tRenamed\n" });
+    expect(renamed.displayName).toBe("Renamed");
   });
 
-  it("a name of spaces only is refused at the database", async () => {
-    for (const blank of ["", " ", "     "]) await expect(make(blank)).rejects.toMatchObject({ code: "23514" });
+  it("a name of spaces only is refused", async () => {
+    for (const blank of ["", " ", "     "]) await expect(make(blank)).rejects.toBeInstanceOf(ValidationError);
   });
 
-  it("the shape of a rejected name is a raw Postgres check violation naming the constraint (so the API layer can map it)", async () => {
-    const error = (await make("x".repeat(101)).catch((e: unknown) => e)) as { code?: string; constraint?: string };
-    expect(error.code).toBe("23514");
-    expect(error.constraint).toBeTruthy();
+  it("the shape of a rejected name is a ValidationError naming the field, never the value (so the API layer can map it)", async () => {
+    const error = (await make("Secretvalue".repeat(10)).catch((e: unknown) => e)) as ValidationError;
+    expect(error).toBeInstanceOf(ValidationError);
+    expect(error.fields).toEqual(["displayName"]);
+    expect(error.message).not.toContain("Secretvalue");
   });
 
   it("a null byte in a name is refused, leaves no person and no audit row", async () => {
@@ -462,16 +468,16 @@ describe("name and relationship inputs", () => {
     expect({ audit: await auditCount(), people: await peopleCount() }).toEqual({ audit: before.audit + 1, people: before.people + 1 });
   });
 
-  it("a lone surrogate (invalid UTF-16) is refused or stored well-formed, never stored as corrupt text", async () => {
-    const result = await make("bad\uD800name").then(
-      (p) => p.displayName,
-      () => null,
-    );
-    if (result !== null) expect(result.isWellFormed()).toBe(true);
+  it("a lone surrogate (invalid UTF-16) is refused (decision 6), never stored as corrupt text", async () => {
+    await expect(make("bad\uD800name")).rejects.toBeInstanceOf(ValidationError);
   });
 
-  it("control characters and SQL metacharacters are data, not syntax", async () => {
-    for (const name of ["'; drop table people; --", "Robert'); DROP TABLE people;--", "%_\\", "\\u0041", "$1", "{{template}}", "<script>alert(1)</script>", "a\tb\nc"]) {
+  it("control characters inside a name are refused (decision 6)", async () => {
+    for (const name of ["a\tb\nc", "a\u0007b", "a\u0085b"]) await expect(make(name), JSON.stringify(name)).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it("SQL metacharacters are data, not syntax", async () => {
+    for (const name of ["'; drop table people; --", "Robert'); DROP TABLE people;--", "%_\\", "\\u0041", "$1", "{{template}}", "<script>alert(1)</script>"]) {
       const created = await make(name);
       expect((await people.get(carl, created.id)).displayName).toBe(name);
     }
@@ -486,9 +492,9 @@ describe("name and relationship inputs", () => {
     await expect(make("Rem51", { relationship: "👪".repeat(51) })).rejects.toMatchObject({ code: "23514" });
   });
 
-  it("an enormous name (1 MB) is refused by the database, quickly, and writes nothing", async () => {
+  it("an enormous name (1 MB) is refused, quickly, and writes nothing", async () => {
     const before = await peopleCount();
-    await expect(make("x".repeat(1_000_000))).rejects.toMatchObject({ code: "23514" });
+    await expect(make("x".repeat(1_000_000))).rejects.toBeInstanceOf(ValidationError);
     expect(await peopleCount()).toBe(before);
   });
 
@@ -511,16 +517,17 @@ describe("name and relationship inputs", () => {
 
   it("a person that fails the DB check leaves a clean audit trail: no create row for an id that does not exist", async () => {
     const before = await auditCount();
-    await make("x".repeat(101)).catch(() => {});
+    await expect(make("Valid", { relationship: "x".repeat(51) })).rejects.toMatchObject({ code: "23514" });
     expect(await auditCount()).toBe(before);
   });
 
-  // CONFIRMED BUG B1 (low): btrim(display_name) <> '' only strips ASCII spaces, so names that look
-  // blank (tab, newline, no-break space, zero-width space) are accepted.
-  it.fails("B1: a name that is only tabs, newlines, no-break spaces or zero-width characters is refused (it is visually blank)", async () => {
+  // Was CONFIRMED BUG B1 (low): blank is now Unicode-aware, in the repository and in the database check.
+  it("B1: a name that is only tabs, newlines, no-break spaces or zero-width characters is refused (it is visually blank)", async () => {
+    const before = await peopleCount();
     for (const blank of ["\t", "\n", " ", "​", " ", "　", " ​ "]) {
-      await expect(make(blank), JSON.stringify(blank)).rejects.toBeTruthy();
+      await expect(make(blank), JSON.stringify(blank)).rejects.toBeInstanceOf(ValidationError);
     }
+    expect(await peopleCount()).toBe(before);
   });
 
   // Was CONFIRMED BUG B2 (low): every input is type-checked at the repository boundary.

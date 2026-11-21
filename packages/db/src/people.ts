@@ -16,6 +16,7 @@ import {
 import { kyselyOf, type DbLike } from "./handle.ts";
 import { errorCode } from "./log.ts";
 import { VISIBILITIES } from "./migrations/record-columns.ts";
+import { normaliseDisplayName } from "./names.ts";
 import type { Database, PeopleTable, Visibility } from "./schema.ts";
 
 const ENTITY = "person";
@@ -44,11 +45,19 @@ export type PersonChanges = Partial<NewPerson>;
 /**
  * Runtime shape of the inputs (B2): wrong types and unknown fields are refused
  * with ValidationError; an explicit visibility must be one of the enum, never
- * defaulted (B5). Owner ids are checked separately: a malformed one is
- * not-found, like any id.
+ * defaulted (B5); the display name is trimmed and checked (decision 6). Owner
+ * ids are checked separately: a malformed one is not-found, like any id.
  */
+const displayNameSchema = z.string().transform((raw, ctx) => {
+  const name = normaliseDisplayName(raw);
+  if (name === null) {
+    ctx.addIssue({ code: "custom", message: "invalid display name" });
+    return z.NEVER;
+  }
+  return name;
+});
 const newPersonSchema = z.strictObject({
-  displayName: z.string(),
+  displayName: displayNameSchema,
   relationship: z.string().nullable().optional(),
   ownerPersonId: z.string().nullable().optional(),
   visibility: z.enum(VISIBILITIES).optional(),
