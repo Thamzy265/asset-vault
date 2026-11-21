@@ -7,6 +7,7 @@ import { ForbiddenError, NotFoundError, PersonInUseError, ValidationError, type 
 import { peopleRepository, type Person } from "../src/people.ts";
 import type { Database } from "../src/schema.ts";
 import { freshDatabase } from "./support/fresh-database.ts";
+import { mintViewer } from "../src/viewer.ts";
 
 // M1.2 AC2 and AC4: every read and write goes through one visibility check, and
 // every change has its audit row in the same transaction.
@@ -23,7 +24,7 @@ let nobody: Viewer; // member with no linked person
 
 async function user(role: "admin" | "member", personId: string | null): Promise<Viewer> {
   const row = await db.insertInto("users").values({ role, person_id: personId }).returning("id").executeTakeFirstOrThrow();
-  return { userId: row.id, role, personId };
+  return mintViewer({ userId: row.id, role, personId });
 }
 
 async function auditRows(entityId?: string) {
@@ -297,7 +298,7 @@ describe("input checks at the repository boundary (B2, B4, B5)", () => {
 
   it("ids are compared case-insensitively: an uppercase viewer, record or owner id is the same id, stored and returned in lowercase", async () => {
     const owner = await people.create(admin, { displayName: "Case owner" });
-    const upperViewer: Viewer = { userId: admin.userId.toUpperCase(), role: "admin", personId: admin.personId!.toUpperCase() };
+    const upperViewer: Viewer = mintViewer({ userId: admin.userId.toUpperCase(), role: "admin", personId: admin.personId!.toUpperCase() });
     const child = await people.create(upperViewer, { displayName: "Case child", ownerPersonId: owner.id.toUpperCase() });
     expect(child.ownerPersonId).toBe(owner.id);
     expect(child.createdByUserId).toBe(admin.userId);
@@ -306,7 +307,7 @@ describe("input checks at the repository boundary (B2, B4, B5)", () => {
     // A no-op: no update row, only its view row (review L2), charged to the lowercase user id.
     expect((await auditRows(child.id)).slice(before).map((r) => [r.action, r.actor_user_id])).toEqual([["view", admin.userId]]);
     const privateOfBea = await people.create(admin, { displayName: "Case private", ownerPersonId: bea.personId, visibility: "private" });
-    const upperBea: Viewer = { ...bea, userId: bea.userId.toUpperCase(), personId: bea.personId!.toUpperCase() };
+    const upperBea: Viewer = mintViewer({ ...bea, userId: bea.userId.toUpperCase(), personId: bea.personId!.toUpperCase() });
     await expect(people.get(upperBea, privateOfBea.id.toUpperCase())).resolves.toMatchObject({ id: privateOfBea.id });
   });
 });

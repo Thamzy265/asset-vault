@@ -8,6 +8,7 @@ import { ForbiddenError, NotFoundError, PersonInUseError, ValidationError, type 
 import { peopleRepository, type Person } from "../src/people.ts";
 import type { Database } from "../src/schema.ts";
 import { freshDatabase } from "./support/fresh-database.ts";
+import { mintViewer } from "../src/viewer.ts";
 
 // Tester (M1.2): abuse, edge and failure cases for the people repository and the
 // visibility layer. Source of the abuse cases: docs/design/m1-2-data-model.md
@@ -33,7 +34,7 @@ let adminNoPerson: Viewer; // admin with no linked person
 
 async function user(role: "admin" | "member", personId: string | null): Promise<Viewer> {
   const row = await db.insertInto("users").values({ role, person_id: personId }).returning("id").executeTakeFirstOrThrow();
-  return { userId: row.id, role, personId };
+  return mintViewer({ userId: row.id, role, personId });
 }
 const auditCount = async () => Number((await db.selectFrom("audit_log").select(sql<string>`count(*)`.as("n")).executeTakeFirstOrThrow()).n);
 const peopleCount = async () => Number((await db.selectFrom("people").select(sql<string>`count(*)`.as("n")).executeTakeFirstOrThrow()).n);
@@ -187,8 +188,11 @@ describe("who sees what: admin, member without a person, admin without a person"
   });
 
   it("extra fields on a viewer (isAdmin, scope) are ignored: they can't widen what the viewer sees", async () => {
-    const sneaky = { ...carl, isAdmin: true, role: "member", scope: "all", visibleTo: "true" } as unknown as Viewer;
+    // M1.3 item (a): mintViewer keeps only userId, role and personId; a hand-made copy is no viewer at all.
+    const sneaky = mintViewer({ ...carl, isAdmin: true, role: "member", scope: "all", visibleTo: "true" } as never);
     await expect(people.get(sneaky, privOwnedByBea.id)).rejects.toBeInstanceOf(NotFoundError);
+    const handMade = { ...carl, isAdmin: true, role: "member", scope: "all", visibleTo: "true" } as unknown as Viewer;
+    await expect(people.get(handMade, privOwnedByBea.id)).rejects.toThrow(/viewer/i);
   });
 });
 
@@ -261,7 +265,7 @@ describe("no oracle between 'does not exist' and 'exists but hidden'", () => {
 
 describe("forged or stale viewer (the repository trusts the session; what happens if it lies)", () => {
   it("a viewer whose user id is not a real user can read, but the failed view audit is logged and never breaks the read", async () => {
-    const ghost: Viewer = { userId: randomUUID(), role: "member", personId: null };
+    const ghost: Viewer = mintViewer({ userId: randomUUID(), role: "member", personId: null });
     const fam = await people.create(carl, { displayName: "Seen by ghost", ownerPersonId: carl.personId });
     logged.length = 0;
     await expect(people.get(ghost, fam.id)).resolves.toMatchObject({ id: fam.id });
@@ -270,7 +274,7 @@ describe("forged or stale viewer (the repository trusts the session; what happen
   });
 
   it("a viewer whose user id is not a real user cannot write: the whole change rolls back (no change without an audit row)", async () => {
-    const ghost: Viewer = { userId: randomUUID(), role: "admin", personId: null };
+    const ghost: Viewer = mintViewer({ userId: randomUUID(), role: "admin", personId: null });
     const before = { audit: await auditCount(), people: await peopleCount() };
     await expect(people.create(ghost, { displayName: "Ghost write" })).rejects.toMatchObject({ code: "23503" });
     expect({ audit: await auditCount(), people: await peopleCount() }).toEqual(before);

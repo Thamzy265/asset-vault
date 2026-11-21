@@ -8,6 +8,7 @@ import { migrateUp } from "../src/migrate.ts";
 import { peopleRepository } from "../src/people.ts";
 import type { Database } from "../src/schema.ts";
 import { freshDatabase } from "./support/fresh-database.ts";
+import { mintViewer } from "../src/viewer.ts";
 
 // Review C2: the repository parses the viewer once per call and passes the parsed
 // viewer through; and a write's audit row names exactly the columns it wrote, so a
@@ -43,8 +44,8 @@ beforeAll(async () => {
     ])
     .returning("id")
     .execute();
-  admin = { userId: users[0]!.id, role: "admin", personId: seed[0]!.id };
-  bea = { userId: users[1]!.id, role: "member", personId: seed[1]!.id };
+  admin = mintViewer({ userId: users[0]!.id, role: "admin", personId: seed[0]!.id });
+  bea = mintViewer({ userId: users[1]!.id, role: "member", personId: seed[1]!.id });
 });
 afterAll(async () => {
   await db?.destroy();
@@ -100,7 +101,7 @@ describe("the access helpers take only a parsed viewer (review C2)", () => {
   const row = { id: randomUUID(), owner_person_id: null, visibility: "family" };
 
   it("checkViewer's result is accepted by every helper", () => {
-    const v = checkViewer({ userId: randomUUID(), role: "admin", personId: null });
+    const v = checkViewer(mintViewer({ userId: randomUUID(), role: "admin", personId: null }));
     expect([isOwner(v, "people", row), canManage(v, "people", row), canEdit(v, "people", row), canCreateFor(v, null)]).toEqual([false, true, true, true]);
     expect(visibleTo(v, "people")).toBeDefined();
   });

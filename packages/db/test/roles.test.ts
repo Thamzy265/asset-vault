@@ -11,6 +11,7 @@ import type { Database } from "../src/schema.ts";
 import { readSchemaVersion } from "../src/schema-version.ts";
 import { migrateTo } from "./support/migrate.ts";
 import { freshDatabase, type FreshDatabase } from "./support/fresh-database.ts";
+import { mintViewer } from "../src/viewer.ts";
 
 // M1.2 decision 3: two database roles. vault_migrator owns the database and the schema and runs
 // migrations; vault_app (web and worker) is not a superuser, owns nothing, and gets only what
@@ -180,7 +181,7 @@ describe("what vault_app may do (migration 0004)", () => {
   it("every app-side function works as vault_app: people repository, heartbeat, schema version, audit retention", async () => {
     const person = await migrator.insertInto("people").values({ display_name: "App admin" }).returning("id").executeTakeFirstOrThrow();
     const user = await migrator.insertInto("users").values({ role: "admin", person_id: person.id }).returning("id").executeTakeFirstOrThrow();
-    const viewer: Viewer = { userId: user.id, role: "admin", personId: person.id };
+    const viewer: Viewer = mintViewer({ userId: user.id, role: "admin", personId: person.id });
     const people = peopleRepository(app, { log: () => {} });
     const p = await people.create(viewer, { displayName: "Made as vault_app" });
     await people.get(viewer, p.id);

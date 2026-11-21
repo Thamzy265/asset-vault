@@ -14,6 +14,8 @@ const SYMBOL_FOR_MESSAGE =
 const KEY_LISTER_MESSAGE =
   "No Object.getOwnPropertySymbols, Object.getOwnPropertyDescriptors or Reflect.ownKeys in apps: they list globalThis's symbol keys (review N1).";
 const KEY_LISTERS = { object: "/^(getOwnPropertySymbols|getOwnPropertyDescriptors)$/" };
+const VIEWER_MESSAGE =
+  "No hand-made Viewer in apps (M1.3 item a): only the session module creates one, from a verified session with 2FA passed. Get it from the session helper; don't cast to Viewer or rename the type.";
 const LOADER_MESSAGE =
   "Apps load modules with static imports or literal import() only (no require, createRequire or node:module), so the no-raw-database rule can see every module they use.";
 
@@ -91,6 +93,12 @@ function noRawDatabaseAccess({ testFiles, allowPgBoss = false }) {
       { selector: "Identifier[name='createRequire']", message: LOADER_MESSAGE },
       { selector: "MemberExpression[property.name='getBuiltinModule']", message: LOADER_MESSAGE },
       { selector: "TSExternalModuleReference", message: LOADER_MESSAGE },
+      // M1.3 item (a): a Viewer comes only from the session module. Casting to it, or
+      // importing it under another name (so the cast check can't see it), is refused.
+      { selector: "TSAsExpression[typeAnnotation.typeName.name='Viewer']", message: VIEWER_MESSAGE },
+      { selector: "TSTypeAssertion[typeAnnotation.typeName.name='Viewer']", message: VIEWER_MESSAGE },
+      { selector: "TSSatisfiesExpression[typeAnnotation.typeName.name='Viewer']", message: VIEWER_MESSAGE },
+      { selector: "ImportSpecifier[imported.name='Viewer'][local.name!='Viewer']", message: VIEWER_MESSAGE },
     ],
   };
 }
