@@ -70,7 +70,9 @@ describe("no secrets in the repo (tester, abuse case: read secrets from the repo
     // Built at run time so this test file itself never contains a secret-shaped string.
     // (secretlint deliberately ignores the documented AWS "EXAMPLE" keys, so use random ones.)
     const awsKeyId = "AKIA" + "ZNWQ7P3KDLMT5XRJ";
-    const awsSecret = randomBytes(30).toString("base64").slice(0, 40);
+    // Hex, not base64 (F-M1.1-1): secretlint's AWS secret pattern ends in `\b`, so a
+    // random base64 secret ending in "/" or "+" (about 1 run in 32) was not flagged.
+    const awsSecret = randomBytes(20).toString("hex");
     const ghToken = "ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8";
 
     it("flags an AWS key pair", async () => {
