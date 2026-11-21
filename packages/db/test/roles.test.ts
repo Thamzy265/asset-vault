@@ -53,6 +53,8 @@ async function appPrivileges(db: Kysely<Database>): Promise<Record<string, strin
 const SIUD = ["DELETE", "INSERT", "SELECT", "UPDATE"];
 /** M1.3 item (g): users are deactivated, not deleted (decision 8); only retention deletes them. */
 const SIU = ["INSERT", "SELECT", "UPDATE"];
+/** M1.3 (0007): setup tokens and sign-in failures are added and removed, never edited. */
+const SID = ["DELETE", "INSERT", "SELECT"];
 const AUDIT_INSERT_COLUMNS = ["action", "actor_user_id", "details", "entity_id", "entity_type", "ip_prefix"];
 
 describe("the roles (init script)", () => {
@@ -121,10 +123,17 @@ describe("the roles (init script)", () => {
 });
 
 describe("what vault_app may do (migration 0004)", () => {
-  it("business tables: SELECT, INSERT, UPDATE, DELETE only; audit_log: SELECT and INSERT on the app-settable columns only; the schema version: SELECT", async () => {
+  it("business tables: SELECT, INSERT, UPDATE, DELETE only; audit_log: SELECT and INSERT on the app-settable columns only; the schema version: SELECT; auth tables as decided in 0007 (setup tokens and sign-in failures: no UPDATE); users: no DELETE", async () => {
     expect(await appPrivileges(migrator)).toEqual({
       _meta: SIUD,
       audit_log: [...AUDIT_INSERT_COLUMNS.map((c) => `INSERT(${c})`), "SELECT"],
+      auth_accounts: SIUD,
+      auth_sessions: SIUD,
+      auth_setup_tokens: SID,
+      auth_sign_in_failures: SID,
+      auth_two_factors: SIUD,
+      auth_users: SIUD,
+      auth_verifications: SIUD,
       kysely_migration: ["SELECT"],
       people: SIUD,
       users: SIU,
@@ -132,7 +141,11 @@ describe("what vault_app may do (migration 0004)", () => {
   });
 
   it("every table in public has a deliberate grant decision (a new table without one fails here: grant it in its migration with grantAppAccess)", async () => {
-    const decided = ["_meta", "audit_log", "kysely_migration", "kysely_migration_lock", "people", "users"];
+    const decided = [
+      "_meta", "audit_log",
+      "auth_accounts", "auth_sessions", "auth_setup_tokens", "auth_sign_in_failures", "auth_two_factors", "auth_users", "auth_verifications",
+      "kysely_migration", "kysely_migration_lock", "people", "users",
+    ];
     const { rows } = await sql<{ name: string }>`
       select c.relname as name from pg_class c join pg_namespace n on n.oid = c.relnamespace
       where n.nspname = 'public' and c.relkind in ('r', 'p', 'v', 'm') order by 1`.execute(migrator);

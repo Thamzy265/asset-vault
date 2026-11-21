@@ -7,7 +7,11 @@ import { migrations } from "../src/migrations/index.ts";
 import type { Database } from "../src/schema.ts";
 import { freshDatabase } from "./support/fresh-database.ts";
 
-const ALL_TABLES = ["_meta", "audit_log", "people", "users"];
+const ALL_TABLES = [
+  "_meta", "audit_log",
+  "auth_accounts", "auth_sessions", "auth_setup_tokens", "auth_sign_in_failures", "auth_two_factors", "auth_users", "auth_verifications",
+  "people", "users",
+];
 
 async function publicTables(db: Kysely<Database>): Promise<string[]> {
   const { rows } = await sql<{ table_name: string }>`
