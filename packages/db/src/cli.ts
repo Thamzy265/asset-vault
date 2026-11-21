@@ -1,5 +1,5 @@
 // Usage: node packages/db/src/cli.ts up|down   (pnpm db:migrate / pnpm db:rollback)
-import { createDb } from "./client.ts";
+import { createMigrationDb } from "./client.ts";
 import { loadDbConfig } from "./config.ts";
 import { waitForDatabaseReady } from "./database-ready.ts";
 import { errorFields, log } from "./log.ts";
@@ -19,7 +19,7 @@ try {
   process.exit(1);
 }
 
-const db = createDb(config.databaseUrl, { maxConnections: 1 });
+const db = createMigrationDb(config.databaseUrl);
 try {
   await waitForDatabaseReady(db);
   if (command === "up") {

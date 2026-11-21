@@ -1,16 +1,18 @@
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { freshDatabase } from "./support/fresh-database.ts";
 
 const run = promisify(execFile);
 const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 
-async function runCli(args: string[], env: Record<string, string>) {
+async function runCli(args: string[], env: Record<string, string>, timeout = 0) {
   try {
     const { stdout, stderr } = await run(process.execPath, [cli, ...args], {
       env: { PATH: process.env.PATH ?? "", ...env },
+      timeout,
     });
     return { code: 0, stdout, stderr };
   } catch (error) {
@@ -52,4 +54,28 @@ describe("db CLI (pnpm db:migrate / db:rollback)", () => {
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("usage");
   });
+});
+
+describe("db CLI uses the migration connection limits (review L7)", () => {
+  it("gives up after lock_timeout (10 s) with 55P03 when another session holds a table lock it needs, instead of waiting forever", async () => {
+    const fresh = await freshDatabase();
+    const holder = new pg.Client({ connectionString: fresh.url });
+    await holder.connect();
+    try {
+      expect((await runCli(["up"], { DATABASE_URL: fresh.url })).code).toBe(0);
+      // Every migrate run reads kysely_migration inside its transaction.
+      await holder.query("begin");
+      await holder.query("lock table kysely_migration in access exclusive mode");
+      const started = Date.now();
+      const result = await runCli(["up"], { DATABASE_URL: fresh.url }, 25_000);
+      const seconds = (Date.now() - started) / 1000;
+      expect(result.code).toBe(1);
+      expect(seconds).toBeGreaterThan(9);
+      expect(seconds).toBeLessThan(20);
+      expect(result.stderr).toContain('"code":"55P03"'); // lock_not_available
+    } finally {
+      await holder.end();
+      await fresh.drop();
+    }
+  }, 40_000);
 });
