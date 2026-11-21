@@ -13,17 +13,19 @@ export type DbHandle = { readonly kind: "vault-db" };
 
 /**
  * Handle -> client.
- * - Production (review N1): module-private. A symbol key on globalThis can
+ * - By default (review N1): module-private. A symbol key on globalThis can
  *   always be listed (Object.getOwnPropertySymbols, Reflect.ownKeys), and the
  *   map would hand out the raw client, so production keeps none.
- * - Development only (review L7): kept on globalThis under a registered
- *   symbol, because `next dev` re-evaluates this module on reload while the
- *   web app keeps its handle (apps/web/src/server/db.ts).
- * The web and worker images set NODE_ENV=production (their Dockerfiles).
+ * - Development and test only (review L7): kept on globalThis under a
+ *   registered symbol, because `next dev` re-evaluates this module on reload
+ *   while the web app keeps its handle (apps/web/src/server/db.ts).
+ * Fail safe (M1.3 item f): any other NODE_ENV, including unset or a typo,
+ * keeps the map private. The web and worker images set NODE_ENV=production.
  */
 type ClientMap = WeakMap<DbHandle, Kysely<Database>>;
+const SHARED_MAP_ENVS: ReadonlySet<string | undefined> = new Set(["development", "test"]);
 function clientMap(): ClientMap {
-  if (process.env.NODE_ENV === "production") return new WeakMap();
+  if (!SHARED_MAP_ENVS.has(process.env.NODE_ENV)) return new WeakMap();
   const key = Symbol.for("@vault/db/clients");
   const store = globalThis as typeof globalThis & { [key: symbol]: ClientMap | undefined };
   if (!store[key]) {
