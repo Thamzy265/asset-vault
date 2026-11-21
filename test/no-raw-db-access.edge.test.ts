@@ -97,6 +97,7 @@ describe("what @vault/db exports to apps (regression lock)", () => {
         "PersonInUseError",
         "closeDatabase",
         "createAuthService",
+        "deleteExpiredAuthRows",
         "errorCode",
         "errorFields",
         "loadAuthConfig",

@@ -17,3 +17,4 @@ export { DatabaseUnavailableError, waitForDatabase, type RetryInfo, type WaitOpt
 export { loadAuthConfig, type AuthConfig } from "./auth/config.ts";
 export { createAuthService, type AuthService, type AuthServiceOptions } from "./auth/service.ts";
 export type { SessionState, SessionUser } from "./auth/session.ts";
+export { deleteExpiredAuthRows, type AuthCleanupResult } from "./auth/cleanup.ts";
