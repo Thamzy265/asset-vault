@@ -11,5 +11,20 @@ export default defineConfig({
     baseURL: `http://127.0.0.1:${port}`,
     trace: "retain-on-failure",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    {
+      name: "chromium",
+      testIgnore: "**/*.destructive.spec.ts",
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      // Specs that stop and restart a service. They run alone, after everything
+      // else, so they cannot disturb the other specs.
+      name: "destructive",
+      testMatch: "**/*.destructive.spec.ts",
+      dependencies: ["chromium"],
+      fullyParallel: false,
+      use: { ...devices["Desktop Chrome"] },
+    },
+  ],
 });
