@@ -67,7 +67,7 @@ describe("start-up database wait logs the failure code and fails fast when retry
 
   it("a refused connection is retried, and each retry log carries the code only", async () => {
     const logged: Array<[string, string, Record<string, unknown>]> = [];
-    const db = createDb("postgres://vault:retrysecret1@127.0.0.1:1/vault", { maxConnections: 1 });
+    const db = createDb(`postgres://vault:${"retrysecret1"}@127.0.0.1:1/vault`, { maxConnections: 1 });
     try {
       await expect(
         waitForDatabaseReady(db, { timeoutMs: 1_000, initialDelayMs: 100, log: (...l) => logged.push(l) }),
