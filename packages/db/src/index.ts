@@ -1,5 +1,6 @@
 // The public API of @vault/db: what apps may use. No raw client, pool or query
 // builder is exported; apps hold an opaque DbHandle (handle.ts).
+export { runAuditRetention, type AuditRetentionResult } from "./audit-retention.ts";
 export { pingDatabase } from "./client.ts";
 export { closeDatabase, openDatabase, type DbHandle } from "./handle.ts";
 export { ConfigError, loadDbConfig, type DbConfig } from "./config.ts";

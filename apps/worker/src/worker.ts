@@ -1,5 +1,6 @@
-import { closeDatabase, log, migrateUp, openDatabase, recordHeartbeat, waitForDatabaseReady, type WaitOptions } from "@vault/db";
+import { closeDatabase, log, migrateUp, openDatabase, recordHeartbeat, runAuditRetention, waitForDatabaseReady, type WaitOptions } from "@vault/db";
 import { PgBoss } from "pg-boss";
+import { AUDIT_RETENTION_CRON, AUDIT_RETENTION_QUEUE, runAuditRetentionJob } from "./audit-retention-job.ts";
 import { HEARTBEAT_CRON, HEARTBEAT_QUEUE, runHeartbeat } from "./heartbeat-job.ts";
 
 export type WorkerOptions = {
@@ -15,7 +16,8 @@ export type RunningWorker = {
 
 /**
  * Waits for Postgres (backoff, ~60 s), applies pending migrations, starts
- * pg-boss and schedules the heartbeat. Throws DatabaseUnavailableError if
+ * pg-boss and schedules the heartbeat and the nightly audit retention.
+ * Throws DatabaseUnavailableError if
  * Postgres never answers, or at once if it refuses the credentials or
  * database name, so main() can exit non-zero.
  */
@@ -42,7 +44,15 @@ export async function startWorker(options: WorkerOptions): Promise<RunningWorker
       log: (msg, fields) => log("info", msg, fields),
     });
   });
-  log("info", "worker started", { queues: [HEARTBEAT_QUEUE] });
+  await boss.createQueue(AUDIT_RETENTION_QUEUE);
+  await boss.schedule(AUDIT_RETENTION_QUEUE, AUDIT_RETENTION_CRON);
+  await boss.work(AUDIT_RETENTION_QUEUE, async () => {
+    await runAuditRetentionJob({
+      retain: () => runAuditRetention(db),
+      log: (msg, fields) => log("info", msg, fields),
+    });
+  });
+  log("info", "worker started", { queues: [HEARTBEAT_QUEUE, AUDIT_RETENTION_QUEUE] });
 
   return {
     boss,
