@@ -29,8 +29,6 @@ export type RecordColumnsOptions = {
   ownerRequired: boolean;
 };
 
-export const VISIBILITIES = ["family", "private"] as const;
-
 export function withRecordColumns<TB extends string, C extends string>(
   table: CreateTableBuilder<TB, C>,
   options: RecordColumnsOptions,

@@ -1,6 +1,5 @@
 import type { ColumnType, Generated } from "kysely";
-import type { AUDIT_ACTIONS } from "./migrations/0003_audit_log.ts";
-import type { VISIBILITIES } from "./migrations/record-columns.ts";
+import type { AUDIT_ACTIONS, VISIBILITIES } from "./rules.ts";
 
 /** System key/value table. No personal data is ever stored here. */
 export interface MetaTable {

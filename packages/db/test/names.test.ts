@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BIDI_OVERRIDES_AND_ISOLATES, CONTROL_CHARACTERS, INVISIBLE_CHARACTERS, WHITE_SPACE } from "../src/migrations/0002_people_users.ts";
+import { BIDI_OVERRIDES_AND_ISOLATES, CONTROL_CHARACTERS, INVISIBLE_CHARACTERS, WHITE_SPACE } from "../src/rules.ts";
 import { normaliseDisplayName } from "../src/names.ts";
 
 // M1.2 decision 6: names are trimmed of Unicode whitespace, then refused when

@@ -7,7 +7,8 @@ import { sql, type Kysely } from "kysely";
  * days, then deletes deactivated users with no audit rows left (decision 8). The trigger checks those rules itself too, so setting the retention
  * flag by hand can't remove or edit anything retention wouldn't.
  */
-export const AUDIT_ACTIONS = [
+/** This migration's own copy, frozen with it (review L6); live code uses src/rules.ts. */
+const AUDIT_ACTIONS = [
   "view",
   "create",
   "update",
@@ -22,7 +23,7 @@ export const AUDIT_ACTIONS = [
 ] as const;
 
 /** The audit actions that may carry an ip_prefix (design note M1.2, decision 4). */
-export const IP_PREFIX_ACTIONS = ["sign_in", "sign_in_failed", "2fa_failed", "backup_code_used"] as const;
+const IP_PREFIX_ACTIONS = ["sign_in", "sign_in_failed", "2fa_failed", "backup_code_used"] as const;
 
 const list = (values: readonly string[]) => sql.join(values.map((v) => sql.lit(v)));
 

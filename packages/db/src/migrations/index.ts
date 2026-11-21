@@ -1,3 +1,6 @@
+// Merged migrations are frozen: never edit one after it reaches main. A rule
+// change is a new migration. Live code takes its rules from ../rules.ts, never
+// from here; test/live-rules.test.ts checks the two still agree (review L6).
 import type { Migration } from "kysely/migration";
 import * as m0001 from "./0001_meta.ts";
 import * as m0002 from "./0002_people_users.ts";

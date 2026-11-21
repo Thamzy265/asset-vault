@@ -19,8 +19,8 @@ import {
 } from "./access.ts";
 import { kyselyOf, type DbLike } from "./handle.ts";
 import { errorCode } from "./log.ts";
-import { VISIBILITIES } from "./migrations/record-columns.ts";
 import { normaliseDisplayName } from "./names.ts";
+import { VISIBILITIES } from "./rules.ts";
 import type { Database, PeopleTable, Visibility } from "./schema.ts";
 
 const ENTITY = "person";

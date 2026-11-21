@@ -5,7 +5,7 @@ import {
   INVISIBLE_CHARACTERS,
   WHITE_SPACE,
   type CodePointRange,
-} from "./migrations/0002_people_users.ts";
+} from "./rules.ts";
 
 /** A RegExp bracket body for the ranges (`u` flag). */
 function jsClass(...sets: ReadonlyArray<readonly CodePointRange[]>): string {
@@ -25,7 +25,7 @@ const VISIBLE = new RegExp(`[^${jsClass(WHITE_SPACE, INVISIBLE_CHARACTERS)}]`, "
  * from both ends, then returns null (refused) when the name is empty or blank
  * (only whitespace or zero-width characters), holds a control, bidi override
  * or isolate character or a lone surrogate, or is longer than 100 code
- * points. The database check in migration 0002 matches.
+ * points. The database check (migration 0002) matches; test/live-rules.test.ts checks it.
  */
 export function normaliseDisplayName(raw: string): string | null {
   if (!raw.isWellFormed()) return null;

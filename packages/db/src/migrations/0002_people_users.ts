@@ -3,31 +3,31 @@ import { addUpdatedAtTrigger, withRecordColumns } from "./record-columns.ts";
 
 /**
  * Character classes for display names (design note M1.2, decision 6), as
- * inclusive code point ranges. The database check below and the repository
- * (names.ts) are both built from these, so they can't drift apart; a test
- * checks each one against Unicode's own property.
+ * inclusive code point ranges. This migration's own copy, frozen with it
+ * (review L6): live code uses src/rules.ts, and test/live-rules.test.ts checks
+ * that the two still agree on a migrated database.
  */
-export type CodePointRange = readonly [number, number];
+type CodePointRange = readonly [number, number];
 /** Unicode White_Space: trimmed from both ends. */
-export const WHITE_SPACE: readonly CodePointRange[] = [
+const WHITE_SPACE: readonly CodePointRange[] = [
   [0x09, 0x0d], [0x20, 0x20], [0x85, 0x85], [0xa0, 0xa0], [0x1680, 0x1680], [0x2000, 0x200a],
   [0x2028, 0x2029], [0x202f, 0x202f], [0x205f, 0x205f], [0x3000, 0x3000],
 ];
 /** Unicode Default_Ignorable_Code_Point: zero-width and other characters that render as nothing. */
-export const INVISIBLE_CHARACTERS: readonly CodePointRange[] = [
+const INVISIBLE_CHARACTERS: readonly CodePointRange[] = [
   [0xad, 0xad], [0x34f, 0x34f], [0x61c, 0x61c], [0x115f, 0x1160], [0x17b4, 0x17b5], [0x180b, 0x180f],
   [0x200b, 0x200f], [0x202a, 0x202e], [0x2060, 0x206f], [0x3164, 0x3164], [0xfe00, 0xfe0f], [0xfeff, 0xfeff],
   [0xffa0, 0xffa0], [0xfff0, 0xfff8], [0x1bca0, 0x1bca3], [0x1d173, 0x1d17a], [0xe0000, 0xe0fff],
 ];
 /** Unicode Cc. */
-export const CONTROL_CHARACTERS: readonly CodePointRange[] = [
+const CONTROL_CHARACTERS: readonly CodePointRange[] = [
   [0x00, 0x1f], [0x7f, 0x9f],
 ];
 /** Bidi embeddings, overrides (U+202A-U+202E) and isolates (U+2066-U+2069). */
-export const BIDI_OVERRIDES_AND_ISOLATES: readonly CodePointRange[] = [
+const BIDI_OVERRIDES_AND_ISOLATES: readonly CodePointRange[] = [
   [0x202a, 0x202e], [0x2066, 0x2069],
 ];
-export const DISPLAY_NAME_MAX_CODE_POINTS = 100;
+const DISPLAY_NAME_MAX_CODE_POINTS = 100;
 
 /** A Postgres regex bracket body for the ranges. NUL is left out: Postgres text can't hold it. */
 function pgClass(...sets: ReadonlyArray<readonly CodePointRange[]>): string {
