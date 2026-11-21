@@ -56,8 +56,9 @@ const newPersonSchema = z.strictObject({
 const personChangesSchema = newPersonSchema.partial();
 
 /** A malformed owner id is not-found; a well-formed one is returned in lowercase (B4). */
-function ownerIdOf(ownerPersonId: string | null | undefined): string | null | undefined {
-  return ownerPersonId === undefined || ownerPersonId === null ? ownerPersonId : checkId(ownerPersonId);
+function withCheckedOwner<T extends { ownerPersonId?: string | null | undefined }>(input: T): T {
+  const owner = input.ownerPersonId;
+  return owner === undefined || owner === null ? input : { ...input, ownerPersonId: checkId(owner) };
 }
 
 /** The writable columns, as stored. Audit rows name these columns, never their values. */
@@ -82,8 +83,11 @@ function toPerson(row: Selectable<PeopleTable>): Person {
   };
 }
 
+/** Parsed input: a field that is absent or undefined was not given. */
+type GivenFields = { [K in keyof NewPerson]?: NewPerson[K] | undefined };
+
 /** Only the fields actually given (undefined means "not given"). */
-function columnsOf(input: PersonChanges): PersonColumns {
+function columnsOf(input: GivenFields): PersonColumns {
   const out: PersonColumns = {};
   if (input.displayName !== undefined) out.display_name = input.displayName;
   if (input.relationship !== undefined) out.relationship = input.relationship;
@@ -119,8 +123,7 @@ export function peopleRepository(handle: DbLike, options: RepositoryOptions = {}
   return {
     async create(viewer: Viewer, newPerson: NewPerson): Promise<Person> {
       const v = checkViewer(viewer);
-      const parsed = parseInput(newPersonSchema, newPerson);
-      const input: NewPerson = { ...parsed, ownerPersonId: ownerIdOf(parsed.ownerPersonId) };
+      const input = withCheckedOwner(parseInput(newPersonSchema, newPerson));
       return db.transaction().execute(async (trx) => {
         await assertOwnerVisible(trx, v, input.ownerPersonId);
         const values = columnsOf(input);
@@ -170,8 +173,7 @@ export function peopleRepository(handle: DbLike, options: RepositoryOptions = {}
     async update(viewer: Viewer, id: string, personChanges: PersonChanges): Promise<Person> {
       const v = checkViewer(viewer);
       const personId = checkId(id);
-      const parsed = parseInput(personChangesSchema, personChanges);
-      const changes: PersonChanges = { ...parsed, ownerPersonId: ownerIdOf(parsed.ownerPersonId) };
+      const changes = withCheckedOwner(parseInput(personChangesSchema, personChanges));
       return db.transaction().execute(async (trx) => {
         const current = await trx
           .selectFrom("people")
