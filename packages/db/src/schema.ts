@@ -10,3 +10,6 @@ export interface MetaTable {
 export interface Database {
   _meta: MetaTable;
 }
+
+/** The typed query builder for this schema. */
+export type Db = import("kysely").Kysely<Database>;
