@@ -221,6 +221,8 @@ export function peopleRepository(handle: DbLike, options: RepositoryOptions = {}
         if (Object.keys(changed).length === 0) return { person: toPerson(current), viewed: true };
         if (!canEdit(v, "people", current)) throw new ForbiddenError();
         if (("owner_person_id" in changed || "visibility" in changed) && !canManage(v, "people", current)) throw new ForbiddenError();
+        // Review L5: only admins may leave a record with no owner (a private one would then be an admin's to recover).
+        if ("owner_person_id" in changed && changed.owner_person_id === null && v.role !== "admin") throw new ForbiddenError();
         if ("owner_person_id" in changed) await assertOwnerVisible(trx, v, changed.owner_person_id);
 
         const row = await trx

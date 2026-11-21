@@ -418,6 +418,26 @@ describe("write rules (decisions 1 and 2): seeing is not editing", () => {
     await expect(people.update(carl, rec.id, { visibility: "private" })).resolves.toMatchObject({ visibility: "private" });
   });
 
+  // Review L5: an unowned record is manageable by admins only, so a member owner giving up
+  // ownership would leave (for a private record) one only an admin can see or recover.
+  it("a member owner may not clear the owner (ownerPersonId: null): forbidden, nothing changes, no audit row; an admin may", async () => {
+    const fam = await people.create(bea, { displayName: "Keep owner family", ownerPersonId: bea.personId });
+    const priv = await people.create(bea, { displayName: "Keep owner private", ownerPersonId: bea.personId, visibility: "private" });
+    const before = await auditCount();
+    for (const [rec, changes] of [
+      [fam, { ownerPersonId: null }],
+      [priv, { ownerPersonId: null }],
+      [fam, { ownerPersonId: null, visibility: "private" as const }],
+      [priv, { displayName: "Renamed too", ownerPersonId: null }],
+    ] as const) {
+      await expect(people.update(bea, rec.id, changes), JSON.stringify(changes)).rejects.toBeInstanceOf(ForbiddenError);
+    }
+    expect(await auditCount()).toBe(before);
+    expect(await people.get(bea, priv.id)).toMatchObject({ ownerPersonId: bea.personId, displayName: "Keep owner private" });
+    expect(await people.get(bea, fam.id)).toMatchObject({ ownerPersonId: bea.personId, visibility: "family" });
+    await expect(people.update(admin, priv.id, { ownerPersonId: null })).resolves.toMatchObject({ ownerPersonId: null });
+  });
+
   it("delete: the owner's linked user and admins only; another member gets forbidden on a family record and not-found on a hidden one", async () => {
     const one = await people.create(bea, { displayName: "Deletable 1", ownerPersonId: bea.personId });
     const two = await people.create(bea, { displayName: "Deletable 2", ownerPersonId: bea.personId });
