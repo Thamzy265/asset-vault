@@ -1,4 +1,4 @@
-import { errorFields, loadDbConfig, type LogLevel } from "@vault/db";
+import { errorFields, loadAuthConfig, loadDbConfig, type LogLevel } from "@vault/db";
 
 export type StartupDeps = {
   env: Record<string, string | undefined>;
@@ -17,6 +17,7 @@ export async function startupCheck(deps: StartupDeps): Promise<void> {
   let databaseUrl: string;
   try {
     databaseUrl = loadDbConfig(deps.env).databaseUrl;
+    loadAuthConfig(deps.env); // M1.3: fail at start on bad sign-in settings, not at the first sign-in
   } catch (error) {
     deps.log("error", "invalid configuration", errorFields(error));
     deps.exit(1);

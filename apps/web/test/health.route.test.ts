@@ -27,7 +27,7 @@ describe("GET /api/v1/health route module (tester)", () => {
   it.each(["POST", "PUT", "PATCH", "DELETE"] as const)(
     "%s answers 405 with Allow: GET, HEAD, OPTIONS and the JSON error shape",
     async (method) => {
-      const res = route[method]();
+      const res = await route[method]();
       expect(res.status).toBe(405);
       expect(res.headers.get("allow")).toBe("GET, HEAD, OPTIONS");
       expect(res.headers.get("content-type")).toContain("application/json");
@@ -36,7 +36,7 @@ describe("GET /api/v1/health route module (tester)", () => {
   );
 
   it("OPTIONS answers 204 with the same Allow header and no body", async () => {
-    const res = route.OPTIONS();
+    const res = await route.OPTIONS();
     expect(res.status).toBe(204);
     expect(res.headers.get("allow")).toBe("GET, HEAD, OPTIONS");
     expect(await res.text()).toBe("");

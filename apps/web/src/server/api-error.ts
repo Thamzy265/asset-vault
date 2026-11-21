@@ -3,7 +3,7 @@
  * JSON-only, errors included). Messages are fixed strings: never echo the
  * request, a stack trace or anything internal.
  */
-export type ApiErrorCode = "not_found" | "method_not_allowed";
+export type ApiErrorCode = "not_found" | "method_not_allowed" | "unauthorized" | "2fa_required" | "internal_error" | "unavailable";
 
 export type ApiErrorBody = { error: { code: ApiErrorCode; message: string } };
 
@@ -29,4 +29,23 @@ export function readOnlyOptions(): Response {
 
 export function readOnlyMethodNotAllowed(): Response {
   return apiError(405, "method_not_allowed", "This endpoint only supports GET, HEAD and OPTIONS.", READ_ONLY_ALLOW);
+}
+
+/** No session, or it ended (M1.3). */
+export function unauthorized(headers: HeadersInit = {}): Response {
+  return apiError(401, "unauthorized", "Sign in to continue.", { "cache-control": "no-store", ...headers });
+}
+
+/** A session with the password only: two-step sign-in is not set up yet (M1.3). */
+export function twoFactorRequired(headers: HeadersInit = {}): Response {
+  return apiError(403, "2fa_required", "Finish setting up two-step sign-in to continue.", { "cache-control": "no-store", ...headers });
+}
+
+export function internalError(): Response {
+  return apiError(500, "internal_error", "Something went wrong. Try again.", { "cache-control": "no-store" });
+}
+
+/** The session could not be checked (database down): refused, never let through. */
+export function unavailable(): Response {
+  return apiError(503, "unavailable", "The service is unavailable. Try again shortly.", { "cache-control": "no-store", "retry-after": "5" });
 }

@@ -10,7 +10,7 @@ describe("web start-up check failure reason", () => {
     const cause = Object.assign(new Error('password authentication failed for user "vault"'), { code: "28P01" });
     await startupCheck({
       // Built at run time so secretlint doesn't flag a credential-shaped literal.
-      env: { DATABASE_URL: `postgres://vault:${"webstartuppw1"}@db:5432/vault` },
+      env: { DATABASE_URL: `postgres://vault:${"webstartuppw1"}@db:5432/vault`, APP_URL: "http://127.0.0.1:3000", AUTH_ENCRYPTION_KEY: "k".repeat(40) },
       exit: () => {},
       log: (level, msg, fields) => logs.push({ level, msg, fields }),
       wait: async () => {
