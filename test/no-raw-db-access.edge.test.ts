@@ -96,8 +96,10 @@ describe("what @vault/db exports to apps (regression lock)", () => {
         "NotFoundError",
         "PersonInUseError",
         "closeDatabase",
+        "createAuthService",
         "errorCode",
         "errorFields",
+        "loadAuthConfig",
         "loadDbConfig",
         "log",
         "openDatabase",
@@ -112,6 +114,17 @@ describe("what @vault/db exports to apps (regression lock)", () => {
         "waitForDatabaseReady",
       ].sort(),
     );
+  });
+
+  it("the auth service (M1.3) hands apps two functions only: no library instance, adapter or client", () => {
+    const handle = publicApi.openDatabase("postgres://u@127.0.0.1:1/none");
+    try {
+      const auth = publicApi.createAuthService(handle, { appUrl: "http://127.0.0.1:3000", encryptionKey: "k".repeat(40), trustedIpHeader: null });
+      expect(Object.keys(auth).sort()).toEqual(["handle", "session"]);
+      expect(Object.values(auth).every((v) => typeof v === "function")).toBe(true);
+    } finally {
+      void publicApi.closeDatabase(handle);
+    }
   });
 
   it("no exported function hands back a query builder: a handle opened by an app cannot be used as a Kysely client", async () => {

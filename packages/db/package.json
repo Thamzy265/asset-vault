@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@zxcvbn-ts/language-common": "4.2.0",
     "better-auth": "1.7.27",
     "kysely": "~0.29.9",
     "pg": "^8.23.1",
