@@ -41,7 +41,9 @@ describe("no secrets in the repo (tester, abuse case: read secrets from the repo
       .split("\n")
       .filter((l) => l.trim() !== "" && !l.startsWith("#"));
     const vars = Object.fromEntries(lines.map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
-    expect(vars.POSTGRES_PASSWORD).toBe("change-me");
+    // Empty, so a copied .env.example can never start a stack with a published password
+    // (Compose's ${POSTGRES_PASSWORD:?} refuses empty). Reviewer L4.
+    expect(vars.POSTGRES_PASSWORD).toBe("");
     expect(Object.keys(vars).sort()).toEqual(["POSTGRES_DB", "POSTGRES_PASSWORD", "POSTGRES_USER", "WEB_PORT"]);
     for (const [key, value] of Object.entries(vars)) {
       expect(value, key).not.toMatch(/:\/\/.*@/); // no URL with credentials

@@ -10,9 +10,11 @@ Self-hosted web app for a family's assets, insurance policies and their document
 ## Start
 
 ```sh
-cp .env.example .env          # then set POSTGRES_PASSWORD (letters and digits only)
+cp .env.example .env          # then fill in POSTGRES_PASSWORD (empty in the example)
 docker compose up -d --wait   # builds and starts web, worker and postgres
 ```
+
+Pick a long random password, letters and digits only (it goes into a URL), for example the output of `openssl rand -hex 24`. Compose refuses to start while `POSTGRES_PASSWORD` is empty.
 
 - Home page: http://127.0.0.1:3000
 - Health: http://127.0.0.1:3000/api/v1/health → `{"status":"ok","db":"ok","version":"0.1.0","workerHeartbeat":"…"}`

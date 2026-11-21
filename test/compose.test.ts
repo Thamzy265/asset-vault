@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,6 +57,16 @@ describe("docker-compose.yml trust boundaries (tester)", () => {
 
   it("refuses to start without POSTGRES_PASSWORD (no default password), and the error does not need a value", async () => {
     await expect(config({})).rejects.toMatchObject({ stderr: expect.stringContaining("POSTGRES_PASSWORD") });
+  });
+
+  it("refuses to start from an unedited copy of .env.example (reviewer L4)", async () => {
+    const copied = path.join(emptyDir, ".env");
+    copyFileSync(path.join(repo, ".env.example"), copied);
+    try {
+      await expect(config({})).rejects.toMatchObject({ stderr: expect.stringContaining("POSTGRES_PASSWORD") });
+    } finally {
+      rmSync(copied);
+    }
   });
 
   it("refuses an empty POSTGRES_PASSWORD", async () => {
