@@ -38,7 +38,7 @@ describe("heartbeat and ping", () => {
   });
 
   it("pingDatabase rejects quickly when Postgres is unreachable", async () => {
-    const dead = createDb("postgres://nobody:nothing@127.0.0.1:1/none");
+    const dead = createDb("postgres://127.0.0.1:1/unreachable");
     const started = Date.now();
     await expect(pingDatabase(dead)).rejects.toThrow();
     expect(Date.now() - started).toBeLessThan(5_000);

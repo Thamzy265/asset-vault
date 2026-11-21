@@ -37,7 +37,7 @@ describe("startWorker (real Postgres)", () => {
   it("gives up with DatabaseUnavailableError when Postgres never answers", async () => {
     await expect(
       startWorker({
-        databaseUrl: "postgres://nobody:nothing@127.0.0.1:1/none",
+        databaseUrl: "postgres://127.0.0.1:1/unreachable",
         wait: { timeoutMs: 1_500, initialDelayMs: 100 },
       }),
     ).rejects.toBeInstanceOf(DatabaseUnavailableError);
