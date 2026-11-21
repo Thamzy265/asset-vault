@@ -37,7 +37,7 @@ A. Within A, the developer uses: pnpm workspace (`apps/web`, `apps/worker`, `pac
 - No outbound calls in M1.1. From M1.4 on, every outbound call has a timeout and bounded retries with jitter.
 
 ## Observability
-`GET /api/v1/health` → `{ status, db, version }` (200 or 503). Structured JSON logs with no personal data. Worker logs each heartbeat. The one number to watch: last successful worker heartbeat time.
+`GET /api/v1/health` → `{ status, db, version, workerHeartbeat }` (200 or 503; the status code depends on the DB only). Structured JSON logs with no personal data. Worker logs each heartbeat. The one number to watch: last successful worker heartbeat time.
 
 ## Trust boundaries and abuse cases
 - Boundaries in M1.1: none exposed — Compose binds the app to localhost only; Postgres is not published to the host.

@@ -17,7 +17,7 @@ Self-hosted web app for a family's assets (plots, houses, shares), insurance pol
 - Design notes `docs/design/` · ADRs `docs/adr/` · UI specs `docs/ui/` · Slides `docs/slides/` · Marketing `docs/marketing/`
 - End-to-end tools: Playwright (web). Maestro n/a — no native mobile app; the phone experience is the responsive web app.
 - Stack: TypeScript only — Next.js (App Router) web app + JSON API `/api/v1`, TypeScript worker, PostgreSQL, Docker Compose (ADRs 0001–0003).
-- Check command: `pnpm check` (lint + type check + unit tests) — set by M1.1; the developer confirms the exact script in the M1.1 hand-off.
+- Check command: `pnpm check` (eslint + tsc + vitest + secretlint; Docker must be running — DB tests start a throwaway Postgres). End-to-end: `pnpm test:e2e` against `docker compose up -d --wait`. Dependency audit: `pnpm deps:audit` at every review and release (kept out of `pnpm check` so it works offline).
 - Privacy regions: UK + EU + Malawi (D12, 2026-11-21).
 - Approved tools: none
 - Agent models: defaults (no overrides)

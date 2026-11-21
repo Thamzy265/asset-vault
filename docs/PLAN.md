@@ -31,7 +31,7 @@ Acceptance criteria are drafted for M1 now; later milestones get theirs (and the
 
 ### M1 — Foundation (large: new data store, trust boundaries, auth)
 
-- [ ] **M1.1 Repo and stack skeleton** — app and worker run with one command; check command recorded in Team setup.
+- [x] **M1.1 Repo and stack skeleton** — app and worker run with one command; check command recorded in Team setup.
   - AC: `docker compose up` starts app, database and worker on a clean machine; health endpoint returns OK.
   - AC: check command (lint + type check + tests) passes in CI-equivalent local run.
 - [ ] **M1.2 Data model foundation** — people, users, roles, visibility, audit log; reversible migrations.
@@ -55,6 +55,7 @@ Acceptance criteria are drafted for M1 now; later milestones get theirs (and the
 - [ ] M2.3 Insurance register (insured people and beneficiaries linked to people)
 - [ ] M2.4 Document upload linked to an asset or policy (size/type limits, EXIF location stripped)
 - [ ] M2.5 Printable emergency summary (assets, policies, contacts)
+- [ ] M2.6 Export a person and their records as JSON; household privacy note
 
 ### M3 — Dashboard
 
@@ -92,3 +93,14 @@ Acceptance criteria are drafted for M1 now; later milestones get theirs (and the
 - PWA install — the responsive site works in the phone browser — trigger: ≥ 2 family members use the app on a phone weekly for a month — noted 2026-11-21 by lead
 - Native mobile app (Flutter or React Native, as a client of the same API) — the web app/PWA covers camera upload, home-screen install and reminders — trigger: a family member reports something the web app can't do on their phone twice in one month — noted 2026-11-21 by lead
 - Python extraction worker (pdfplumber / PaddleOCR) — TypeScript + Tesseract may be enough — trigger: in M6.1, Tesseract + LLM read fewer than 8 of 10 sample statements correctly — noted 2026-11-21 by lead
+- Postgres row-level security as a second layer — defence in depth — trigger: a third user is added, or a reviewer finds a query that bypassed the data-access layer — noted 2026-11-21 by lead
+- Passkeys (WebAuthn) — easier, phishing-resistant sign-in — trigger: a family member fails 2FA sign-in 3 times in a month, or the PM asks — noted 2026-11-21 by lead
+- Password reset by email — needs email (M5) — trigger: M5 reminders are live and a user needs a reset — noted 2026-11-21 by lead
+- Admin user-management screen — the server command is enough for 2 users — trigger: a third user is added — noted 2026-11-21 by lead
+- Structured request logs (request id, route, status, duration) for /api/v1 — health alone doesn't need them — trigger: the first /api/v1 endpoint other than health is briefed (M1.2/M1.3) — noted 2026-11-21 by developer
+- Git-history secret scan (e.g. gitleaks) — secretlint scans only the working tree — trigger: the repository is pushed to any remote — noted 2026-11-21 by developer
+- Per-service memory limits in Compose — trigger: idle total in `docker stats` > 1.5 GB — noted 2026-11-21 by developer
+- Upgrade @playwright/test to latest — needs a newer Chromium download — trigger: PM approves `pnpm exec playwright install chromium` under Approved tools — noted 2026-11-21 by developer
+- Upgrade to TypeScript 7 — trigger: a typescript-eslint release whose peer range includes TypeScript 7 — noted 2026-11-21 by developer
+- Writable Next.js cache folder in the web image (tmpfs or a chown of `.next/cache` only) — the app files are read-only by design and nothing uses the cache yet — trigger: the first route that uses revalidate/ISR or next/image — noted 2026-11-21 by reviewer
+
