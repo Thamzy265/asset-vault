@@ -5,7 +5,7 @@ import { migrateDown, migrateUp, migrations } from "../../../packages/db/test/su
 import { getHealth, healthResponse } from "../src/server/health.ts";
 import pkg from "../package.json" with { type: "json" };
 
-const LATEST = "0003_audit_log";
+const LATEST = "0004_database_roles";
 const schemaOk = { readSchemaVersion: async () => LATEST, expectedSchemaVersion: LATEST };
 
 describe("getHealth", () => {
@@ -82,19 +82,30 @@ describe("getHealth", () => {
   });
 });
 
+// As in Compose: migrations run as vault_migrator (url), the web app reads as vault_app (appUrl).
 describe("healthResponse (real Postgres)", () => {
   let url: string;
+  let appUrl: string;
   let drop: () => Promise<void>;
 
   beforeAll(async () => {
-    ({ url, drop } = await freshDatabase());
+    ({ url, appUrl, drop } = await freshDatabase());
   });
   afterAll(async () => drop?.());
 
-  it("returns 200 JSON, never cached, with the app version", async () => {
-    const db = openDatabase(url);
+  async function migrate(step: "up" | "down") {
+    const migrator = openDatabase(url);
     try {
-      await migrateUp(db);
+      return step === "up" ? await migrateUp(migrator) : await migrateDown(migrator);
+    } finally {
+      await closeDatabase(migrator);
+    }
+  }
+
+  it("returns 200 JSON, never cached, with the app version", async () => {
+    const db = openDatabase(appUrl);
+    try {
+      await migrate("up");
       await recordHeartbeat(db, new Date("2026-11-21T10:00:00.000Z"));
       const res = await healthResponse(db);
       expect(res.status).toBe(200);
@@ -113,14 +124,15 @@ describe("healthResponse (real Postgres)", () => {
   });
 
   it("returns 503 after one migration is rolled back, and 200 again once it is re-applied", async () => {
-    const db = openDatabase(url);
+    const db = openDatabase(appUrl);
     try {
-      await migrateUp(db);
-      await migrateDown(db);
+      await migrate("up");
+      expect(await migrate("down")).toEqual([LATEST]);
+      // Rolling back 0004 also takes back the app role's right to read the schema version.
       const res = await healthResponse(db);
       expect(res.status).toBe(503);
-      expect(await res.json()).toMatchObject({ status: "error", db: "ok", schema: { expected: LATEST, applied: "0002_people_users" } });
-      await migrateUp(db);
+      expect(await res.json()).toMatchObject({ status: "error", db: "ok", schema: { expected: LATEST, applied: null } });
+      await migrate("up");
       expect((await healthResponse(db)).status).toBe(200);
     } finally {
       await closeDatabase(db);
@@ -129,7 +141,7 @@ describe("healthResponse (real Postgres)", () => {
 
   it("returns 503 on a database that was never migrated", async () => {
     const fresh = await freshDatabase();
-    const db = openDatabase(fresh.url);
+    const db = openDatabase(fresh.appUrl);
     try {
       const res = await healthResponse(db);
       expect(res.status).toBe(503);

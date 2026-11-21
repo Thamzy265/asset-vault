@@ -30,7 +30,9 @@ export async function startWorker(options: WorkerOptions): Promise<RunningWorker
     throw error;
   }
 
-  const boss = new PgBoss({ connectionString: options.databaseUrl, max: 3 });
+  // The pgboss schema comes from migration 0004: the app role may create pg-boss's tables
+  // in it but can't create schemas (design note M1.2, decision 3).
+  const boss = new PgBoss({ connectionString: options.databaseUrl, max: 3, createSchema: false });
   boss.on("error", (error) => log("error", "pg-boss error", { error: error.message }));
   await boss.start();
   await boss.createQueue(HEARTBEAT_QUEUE);

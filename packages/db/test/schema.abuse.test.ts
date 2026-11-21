@@ -134,6 +134,7 @@ describe("migration 0002 rollback and re-apply", () => {
     try {
       await migrateUp(own);
       await sql`insert into people (display_name) values ('Gone')`.execute(own);
+      await migrateDown(own); // 0004
       await migrateDown(own); // 0003
       expect(await migrateDown(own)).toEqual(["0002_people_users"]);
       expect(await readSchemaVersion(own)).toBe("0001_meta");
@@ -160,7 +161,8 @@ describe("migration 0002 rollback and re-apply", () => {
       await sql`insert into people (display_name, owner_person_id) values ('Child', ${owner})`.execute(own);
       await sql`insert into users (person_id) values (${owner})`.execute(own);
       await sql`insert into _meta (key, value) values ('keep', 'me')`.execute(own);
-      await migrateDown(own);
+      await migrateDown(own); // 0004
+      await migrateDown(own); // 0003
       await expect(migrateDown(own)).resolves.toEqual(["0002_people_users"]);
       expect((await sql<{ value: string }>`select value from _meta where key = 'keep'`.execute(own)).rows[0]!.value).toBe("me");
     } finally {

@@ -10,7 +10,8 @@ import type { Database } from "../src/schema.ts";
 import { freshDatabase } from "./support/fresh-database.ts";
 
 // Tester (M1.2): tampering with the audit log, retention boundaries, and what the
-// database role can and cannot do. Design note: "audit_log is append-only: a trigger raises on
+// database role can and cannot do. `url` connects as vault_migrator (the owner, like the migrate
+// service); `appUrl` as vault_app (like web and worker). Design note: "audit_log is append-only: a trigger raises on
 // UPDATE and DELETE, except a retention function"; "2 years" and "90 days"; "details never hold
 // values"; "ip_prefix: /24 or /48, only on sign-in events".
 //
@@ -18,11 +19,13 @@ import { freshDatabase } from "./support/fresh-database.ts";
 let db: Kysely<Database>;
 let drop: () => Promise<void>;
 let url: string;
+let appUrl: string;
 
 beforeAll(async () => {
   const fresh = await freshDatabase();
   drop = fresh.drop;
   url = fresh.url;
+  appUrl = fresh.appUrl;
   db = createDb(url);
   await migrateUp(db);
 });
@@ -213,98 +216,104 @@ describe("tampering with the retention flag by hand (anything retention itself w
   });
 });
 
-describe("what the database role can and cannot do to the audit log (recorded for the report)", () => {
-  // The tests run as the bootstrap superuser, exactly like the Compose app (POSTGRES_USER owns the
-  // database and is a superuser). The append-only trigger therefore protects against bugs and
-  // against SQL injection/normal DML, NOT against someone holding the app's DB credentials.
-  const row = `insert into audit_log (id, action, entity_type, entity_id) overriding system value values (910001,'view','person','${randomUUID()}')`;
+describe("what the app's database role can and cannot do to the audit log (decision 3)", () => {
+  // Web and worker connect as vault_app: not a superuser, owns nothing, and on audit_log has
+  // SELECT plus INSERT on the app-settable columns only. These were RECORD tests showing that the
+  // old app login (superuser and table owner) could switch every protection off; they now assert
+  // that vault_app can't.
+  // One committed row for the statements to aim at (the log can't be cleaned up afterwards: append-only).
+  const row = `insert into audit_log (id, action, entity_type, entity_id) overriding system value values (910001,'view','person','${randomUUID()}') on conflict (id) do nothing`;
 
-  it("plain DML as the app role: UPDATE, DELETE and TRUNCATE fail with 'append-only'", async () => {
-    expect(await sqlstate("update audit_log set action = 'create' where id = 910001", row)).toBe("42501");
-    expect(await sqlstate("delete from audit_log where id = 910001", row)).toBe("42501");
-    expect(await sqlstate("truncate audit_log", row)).toBe("42501");
-    expect(await sqlstate("truncate audit_log cascade", row)).toBe("42501");
-    expect(await sqlstate("delete from audit_log", row)).toBe("42501");
-    expect(await sqlstate("with d as (delete from audit_log where id = 910001 returning 1) select * from d", row)).toBe("42501");
-  });
-
-  it("RECORD: the app role (table owner and superuser) CAN switch the guard off: ALTER TABLE ... DISABLE TRIGGER, DROP TRIGGER, session_replication_role, DROP FUNCTION CASCADE", async () => {
-    const disable = `alter table audit_log disable trigger audit_log_append_only; ${row}`;
-    expect(await sqlstate("delete from audit_log where id = 910001", disable)).toBe("ok");
-    expect(await sqlstate("update audit_log set action = 'create' where id = 910001", disable)).toBe("ok");
-    expect(await sqlstate("delete from audit_log where id = 910001", `drop trigger audit_log_append_only on audit_log; ${row}`)).toBe("ok");
-    expect(await sqlstate("truncate audit_log", `alter table audit_log disable trigger audit_log_no_truncate; ${row}`)).toBe("ok");
-    expect(await sqlstate("delete from audit_log where id = 910001", `set local session_replication_role = replica; ${row}`)).toBe("ok");
-    expect(await sqlstate("delete from audit_log where id = 910001", `drop function audit_log_guard() cascade; ${row}`)).toBe("ok");
-    expect(await sqlstate("delete from audit_log where id = 910001", `alter table audit_log disable trigger user; ${row}`)).toBe("ok");
-  });
-
-  it("RECORD: the app role can also drop the check constraints (details/ip_prefix minimisation) and then store values", async () => {
-    const drop = "alter table audit_log drop constraint audit_log_details_field_names_only";
-    expect(await sqlstate(`${drop}; insert into audit_log (action, entity_type, entity_id, details) values ('update', 'person', '${randomUUID()}', '{"name":"Jane Doe"}')`)).toBe("ok");
-  });
-
-  it("a least-privilege role (SELECT and INSERT only) cannot tamper in any of those ways", async () => {
-    const role = `vault_least_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
-    const admin = new pg.Client({ connectionString: url });
-    await admin.connect();
+  /** Runs `text` as vault_app in a rolled-back transaction; row 910001 exists (inserted by the owner). */
+  async function asApp(text: string): Promise<string> {
+    const owner = new pg.Client({ connectionString: url });
+    const app = new pg.Client({ connectionString: appUrl });
+    await owner.connect();
+    await app.connect();
     try {
-      await admin.query(`create role ${role} nologin`);
-      await admin.query(`grant usage on schema public to ${role}`);
-      await admin.query(`grant select, insert on audit_log to ${role}`);
-      await admin.query(`grant usage on all sequences in schema public to ${role}`);
-      await admin.query(row);
-      const attempt = async (text: string): Promise<string> => {
-        await admin.query("begin");
-        await admin.query(`set local role ${role}`);
-        try {
-          await admin.query(text);
-          return "ok";
-        } catch (error) {
-          return (error as { code?: string }).code ?? "error";
-        } finally {
-          await admin.query("rollback");
-        }
-      };
-      expect(await attempt("insert into audit_log (action, entity_type, entity_id) values ('view','person','" + randomUUID() + "')")).toBe("ok");
-      for (const statement of [
-        "update audit_log set action = 'create' where id = 910001",
-        "delete from audit_log where id = 910001",
-        "truncate audit_log",
-        "alter table audit_log disable trigger audit_log_append_only",
-        "drop trigger audit_log_append_only on audit_log",
-        "drop table audit_log",
-        "alter table audit_log drop constraint audit_log_ip_prefix",
-        "set session_replication_role = replica",
-        "select set_config('vault.audit_retention','on',false); delete from audit_log",
-      ]) {
-        const code = await attempt(statement);
-        expect(["42501"], statement).toContain(code);
+      await owner.query(row);
+      await app.query("begin");
+      try {
+        await app.query(text);
+        return "ok";
+      } catch (error) {
+        return (error as { code?: string }).code ?? "error";
+      } finally {
+        await app.query("rollback");
       }
     } finally {
-      await admin.query("delete from audit_log where id = 910001").catch(() => {});
-      await admin.query(`drop owned by ${role}`).catch(() => {});
-      await admin.query(`drop role if exists ${role}`).catch(() => {});
-      await admin.end();
+      await owner.end();
+      await app.end();
+    }
+  }
+
+  it("plain DML as vault_app: UPDATE, DELETE and TRUNCATE are refused (no privilege, and the trigger behind it)", async () => {
+    for (const statement of [
+      "update audit_log set action = 'create' where id = 910001",
+      "delete from audit_log where id = 910001",
+      "truncate audit_log",
+      "truncate audit_log cascade",
+      "delete from audit_log",
+      "with d as (delete from audit_log where id = 910001 returning 1) select * from d",
+    ]) {
+      expect(await asApp(statement), statement).toBe("42501");
     }
   });
 
-  it("RECORD: under that least-privilege role audit_log_retention() itself fails (permission denied), because the function is not SECURITY DEFINER", async () => {
-    const role = `vault_ret_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
-    const admin = new pg.Client({ connectionString: url });
-    await admin.connect();
+  it("vault_app can't switch the guard off: DISABLE TRIGGER, DROP TRIGGER, session_replication_role, DROP FUNCTION are all refused", async () => {
+    for (const statement of [
+      "alter table audit_log disable trigger audit_log_append_only",
+      "alter table audit_log disable trigger audit_log_no_truncate",
+      "alter table audit_log disable trigger user",
+      "alter table audit_log disable trigger all",
+      "drop trigger audit_log_append_only on audit_log",
+      "set session_replication_role = replica",
+      "set local session_replication_role = replica",
+      "drop function audit_log_guard() cascade",
+      "create or replace function audit_log_guard() returns trigger language plpgsql as $$ begin return old; end $$",
+      "drop function audit_log_retention()",
+      "alter function audit_log_retention() security invoker",
+      "drop table audit_log",
+      "alter table audit_log rename to audit_log_old",
+      "select set_config('vault.audit_retention','on',false); delete from audit_log where id = 910001",
+    ]) {
+      expect(await asApp(statement), statement).toBe("42501");
+    }
+  });
+
+  it("vault_app can't drop or replace the check constraints (details/ip_prefix minimisation)", async () => {
+    for (const statement of [
+      "alter table audit_log drop constraint audit_log_details_field_names_only",
+      "alter table audit_log drop constraint audit_log_ip_prefix",
+      "alter table audit_log alter column details type text",
+    ]) {
+      expect(await asApp(statement), statement).toBe("42501");
+    }
+  });
+
+  it("vault_app can insert the app-settable columns, but can't set `at` (no backdating) or `id`", async () => {
+    expect(await asApp(`insert into audit_log (actor_user_id, action, entity_type, entity_id, ip_prefix, details) values (null, 'view', 'person', '${randomUUID()}', null, null)`)).toBe("ok");
+    expect(await asApp(`insert into audit_log (action, entity_type, entity_id, at) values ('view','person','${randomUUID()}', now() - interval '3 years')`)).toBe("42501");
+    expect(await asApp(`insert into audit_log (action, at) values ('sign_out', now())`)).toBe("42501");
+    expect(await asApp(`insert into audit_log (id, action) overriding system value values (920001, 'sign_out')`)).toBe("42501");
+    expect(await asApp(`insert into audit_log (id, action) values (default, 'sign_out')`)).toBe("42501");
+  });
+
+  it("retention works as vault_app: audit_log_retention() is SECURITY DEFINER, so it deletes an expired row the app itself can't", async () => {
+    const owner = new pg.Client({ connectionString: url });
+    const app = new pg.Client({ connectionString: appUrl });
+    await owner.connect();
+    await app.connect();
     try {
-      await admin.query(`create role ${role} nologin`);
-      await admin.query(`grant usage on schema public to ${role}`);
-      await admin.query(`grant select, insert on audit_log to ${role}`);
-      await admin.query("begin");
-      await admin.query(`set local role ${role}`);
-      await expect(admin.query("select * from audit_log_retention()")).rejects.toMatchObject({ code: "42501" });
+      const id = randomUUID();
+      await owner.query(`insert into audit_log (action, entity_type, entity_id, at) values ('view','person',$1, ${OLD})`, [id]);
+      await expect(app.query("delete from audit_log where entity_id = $1", [id])).rejects.toMatchObject({ code: "42501" });
+      const { rows } = await app.query("select * from audit_log_retention()");
+      expect(Number(rows[0].deleted)).toBe(1);
+      expect((await owner.query("select count(*)::int as n from audit_log where entity_id = $1", [id])).rows[0].n).toBe(0);
     } finally {
-      await admin.query("rollback").catch(() => {});
-      await admin.query(`drop owned by ${role}`).catch(() => {});
-      await admin.query(`drop role if exists ${role}`).catch(() => {});
-      await admin.end();
+      await owner.end();
+      await app.end();
     }
   });
 });
@@ -445,6 +454,7 @@ describe("migration 0003 rollback", () => {
     try {
       await migrateUp(own);
       await own.insertInto("audit_log").values({ action: "sign_out" }).execute();
+      expect(await migrateDown(own)).toEqual(["0004_database_roles"]);
       const error = (await migrateDown(own).catch((e: unknown) => e)) as Error & { code?: string };
       expect(error).toBeInstanceOf(Error);
       expect(error.message).toMatch(/audit_log has rows/);
@@ -468,6 +478,7 @@ describe("migration 0003 rollback", () => {
       const person = await own.insertInto("people").values({ display_name: "Survivor" }).returning("id").executeTakeFirstOrThrow();
       await own.insertInto("users").values({ person_id: person.id, role: "admin" }).returning("id").executeTakeFirstOrThrow();
 
+      expect(await migrateDown(own)).toEqual(["0004_database_roles"]);
       expect(await migrateDown(own)).toEqual(["0003_audit_log"]);
       expect(await readSchemaVersion(own)).toBe("0002_people_users");
       const gone = await sql`select proname from pg_proc where proname like 'audit_log%'`.execute(own);
@@ -491,7 +502,8 @@ describe("migration 0003 rollback", () => {
     const own = createDb(fresh.url);
     try {
       await migrateUp(own);
-      await migrateDown(own);
+      await migrateDown(own); // 0004
+      await migrateDown(own); // 0003
       const raw = new pg.Client({ connectionString: fresh.url });
       await raw.connect();
       await raw.query("create function audit_log_retention(out a int, out b int) language sql as 'select 1, 2'");

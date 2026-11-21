@@ -7,13 +7,15 @@ import { AUDIT_RETENTION_CRON, AUDIT_RETENTION_QUEUE } from "../src/audit-retent
 import { HEARTBEAT_QUEUE } from "../src/heartbeat-job.ts";
 import { startWorker, type RunningWorker } from "../src/worker.ts";
 
+// As in Compose: migrations run as vault_migrator (url), the worker runs as vault_app (appUrl).
 describe("startWorker (real Postgres)", () => {
   let url: string;
+  let appUrl: string;
   let drop: () => Promise<void>;
   let worker: RunningWorker | undefined;
 
   beforeAll(async () => {
-    ({ url, drop } = await freshDatabase());
+    ({ url, appUrl, drop } = await freshDatabase());
   });
 
   afterAll(async () => {
@@ -23,7 +25,9 @@ describe("startWorker (real Postgres)", () => {
 
   it("does not migrate at start (the one-shot migrate service does, review L7)", async () => {
     const fresh = await freshDatabase();
-    const started = await startWorker({ databaseUrl: fresh.url });
+    // Only the job queue schema, as migration 0004 makes it; no app migrations.
+    await rawQuery(fresh.url, "create schema pgboss; grant usage, create on schema pgboss to vault_app");
+    const started = await startWorker({ databaseUrl: fresh.appUrl });
     try {
       const rows = await rawQuery(fresh.url, "select to_regclass('public.kysely_migration') as t, to_regclass('public.audit_log') as a");
       expect(rows[0]).toEqual({ t: null, a: null });
@@ -37,14 +41,14 @@ describe("startWorker (real Postgres)", () => {
     const migrating = openDatabase(url);
     await migrateUp(migrating);
     await closeDatabase(migrating);
-    worker = await startWorker({ databaseUrl: url });
+    worker = await startWorker({ databaseUrl: appUrl });
 
     const schedules = await worker.boss.getSchedules(HEARTBEAT_QUEUE);
     expect(schedules.map((s) => s.cron)).toEqual(["* * * * *"]);
 
     // Run the job now rather than waiting for the next minute.
     await worker.boss.send(HEARTBEAT_QUEUE);
-    const db = openDatabase(url);
+    const db = openDatabase(appUrl);
     try {
       await expect.poll(() => readHeartbeat(db), { timeout: 15_000, interval: 250 }).not.toBeNull();
     } finally {
@@ -62,6 +66,17 @@ describe("startWorker (real Postgres)", () => {
     const expired = async () =>
       (await rawQuery<{ n: number }>(url, "select count(*)::int as n from audit_log where at < now() - interval '2 years'"))[0]?.n;
     await expect.poll(expired, { timeout: 15_000, interval: 250 }).toBe(0);
+  });
+
+  it("refuses to start before migration 0004 made the job queue schema (it never creates schemas itself)", async () => {
+    const fresh = await freshDatabase();
+    try {
+      await expect(startWorker({ databaseUrl: fresh.appUrl, wait: { timeoutMs: 1_500, initialDelayMs: 100 } })).rejects.toThrow();
+      const rows = await rawQuery(fresh.url, "select to_regnamespace('pgboss')::text as s");
+      expect(rows[0]).toEqual({ s: null });
+    } finally {
+      await fresh.drop();
+    }
   });
 
   it("gives up with DatabaseUnavailableError when Postgres never answers", async () => {

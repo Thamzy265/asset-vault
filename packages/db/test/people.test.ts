@@ -10,7 +10,8 @@ import { freshDatabase } from "./support/fresh-database.ts";
 
 // M1.2 AC2 and AC4: every read and write goes through one visibility check, and
 // every change has its audit row in the same transaction.
-let db: Kysely<Database>;
+let db: Kysely<Database>; // as vault_migrator (owner): setup and raw checks
+let appDb: Kysely<Database>; // as vault_app: the repository, as web and worker run it
 let drop: () => Promise<void>;
 let logged: Array<{ level: string; msg: string; fields: Record<string, unknown> }>;
 let people: ReturnType<typeof peopleRepository>;
@@ -47,7 +48,8 @@ beforeAll(async () => {
   db = createDb(fresh.url);
   await migrateUp(db);
   logged = [];
-  people = peopleRepository(db, { log: (level, msg, fields = {}) => logged.push({ level, msg, fields }) });
+  appDb = createDb(fresh.appUrl);
+  people = peopleRepository(appDb, { log: (level, msg, fields = {}) => logged.push({ level, msg, fields }) });
 
   const seed = await db.insertInto("people").values([{ display_name: "Seed Admin" }, { display_name: "Seed Bea" }, { display_name: "Seed Carl" }]).returning("id").execute();
   admin = await user("admin", seed[0]!.id);
@@ -57,6 +59,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await db?.destroy();
+  await appDb?.destroy();
   await drop?.();
 });
 

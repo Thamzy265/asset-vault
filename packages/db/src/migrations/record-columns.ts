@@ -9,9 +9,11 @@ import { sql, type CreateTableBuilder, type Kysely } from "kysely";
  *     .addColumn("name", "text", (c) => c.notNull())
  *     .execute();
  *   await addUpdatedAtTrigger(db, "assets");
+ *   await grantAppAccess(db, "assets");
  *
- * and its `down` drops the table (the trigger goes with it). Needs the
- * `people` and `users` tables and the `set_updated_at()` function from 0002.
+ * and its `down` drops the table (the trigger and grants go with it). Needs
+ * the `people` and `users` tables and the `set_updated_at()` function from
+ * 0002, and the roles from packages/db/initdb (0004).
  */
 export type RecordColumn =
   | "id"
@@ -57,4 +59,15 @@ export async function addUpdatedAtTrigger(db: Kysely<unknown>, table: string): P
     create trigger ${sql.id(`${table}_set_updated_at`)}
     before update on ${sql.table(table)}
     for each row execute function set_updated_at()`.execute(db);
+}
+
+/** The role web and worker connect as (design note M1.2, decision 3; packages/db/initdb). */
+export const APP_ROLE = "vault_app";
+
+/**
+ * A business table's grants for the app role: SELECT, INSERT, UPDATE, DELETE,
+ * nothing else (no TRUNCATE, TRIGGER or REFERENCES; the app owns nothing).
+ */
+export async function grantAppAccess(db: Kysely<unknown>, table: string): Promise<void> {
+  await sql`grant select, insert, update, delete on ${sql.table(table)} to ${sql.id(APP_ROLE)}`.execute(db);
 }

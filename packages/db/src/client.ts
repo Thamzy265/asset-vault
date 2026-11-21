@@ -38,6 +38,10 @@ function pool(databaseUrl: string, settings: PoolSettings): Kysely<Database> {
     query_timeout: settings.queryMs,
     ...(settings.lockMs !== undefined && { lock_timeout: settings.lockMs }),
     keepAlive: true,
+    // Decision 3: every session resolves unqualified names in public only, whatever the
+    // role's own default says, so nobody can shadow a table from another schema
+    // (the app role may create objects in the pgboss schema).
+    options: "-c search_path=public",
   });
   // An idle client losing its connection (e.g. Postgres restart) must not crash the process.
   p.on("error", () => {});

@@ -13,12 +13,22 @@ const run = promisify(execFile);
 const images = process.env.COMPOSE_PROJECT_NAME ?? "asset-vault";
 const gate = `${images}-gate-${randomBytes(3).toString("hex")}`;
 const password = randomBytes(12).toString("hex");
+const migratorPassword = randomBytes(12).toString("hex");
+const appPassword = randomBytes(12).toString("hex");
 const port = String(40_000 + Math.floor(Math.random() * 20_000));
 const envDir = mkdtempSync(path.join(tmpdir(), "vault-gate-"));
 const emptyEnv = path.join(envDir, "empty.env");
 writeFileSync(emptyEnv, "");
 
-const env = { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", POSTGRES_PASSWORD: password, WEB_PORT: port, VAULT_IMAGES: images };
+const env = {
+  PATH: process.env.PATH ?? "",
+  HOME: process.env.HOME ?? "",
+  POSTGRES_PASSWORD: password,
+  VAULT_MIGRATOR_PASSWORD: migratorPassword,
+  VAULT_APP_PASSWORD: appPassword,
+  WEB_PORT: port,
+  VAULT_IMAGES: images,
+};
 const compose = (...args: string[]) =>
   run("docker", ["compose", "-p", gate, "--env-file", emptyEnv, "-f", "docker-compose.yml", "-f", "e2e/fixtures/reuse-images.compose.yml", ...args], {
     env,
@@ -60,7 +70,7 @@ test("a failing migration keeps web and worker from starting", async () => {
   const { stdout } = await compose("logs", "--no-log-prefix", "migrate");
   expect(stdout).toContain('"msg":"migrate up failed"');
   expect(stdout).toContain('"code":"42P07"');
-  expect(stdout).not.toContain(password);
+  for (const secret of [password, migratorPassword, appPassword]) expect(stdout).not.toContain(secret);
 });
 
 test("once the migration can run, web and worker start; health is 503 while the schema is behind the code", async ({ request }) => {
@@ -84,4 +94,23 @@ test("once the migration can run, web and worker start; health is 503 while the 
 
   await compose("run", "--rm", "--no-deps", "migrate");
   expect((await request.get(health)).status()).toBe(200);
+});
+
+test("web and worker connect as vault_app, which can't switch the audit log's protection off (decision 3)", async () => {
+  const psql = (...args: string[]) => compose("exec", "-T", "postgres", "psql", "-U", "vault", "-d", "vault", "-At", ...args);
+  const { stdout } = await psql("-c", "select distinct usename from pg_stat_activity where backend_type = 'client backend' and usename <> 'vault' order by 1");
+  expect(stdout.trim().split("\n")).toEqual(["vault_app"]);
+  const { stdout: roles } = await psql("-c", "select rolname || ':' || rolsuper from pg_roles where rolname like 'vault\\_%' order by 1");
+  expect(roles.trim().split("\n")).toEqual(["vault_app:false", "vault_migrator:false"]);
+
+  // As vault_app, over TCP with its password, like the app itself.
+  const asApp = (sql: string) =>
+    compose("exec", "-T", "-e", `PGPASSWORD=${appPassword}`, "postgres", "psql", "-h", "127.0.0.1", "-U", "vault_app", "-d", "vault", "-v", "ON_ERROR_STOP=1", "-c", sql).then(
+      () => "ok",
+      (e: { stderr: string }) => e.stderr,
+    );
+  expect(await asApp("select count(*) from audit_log")).toBe("ok");
+  expect(await asApp("alter table audit_log disable trigger all")).toMatch(/must be owner/);
+  expect(await asApp("delete from audit_log")).toMatch(/permission denied/);
+  expect(await asApp("set session_replication_role = replica")).toMatch(/permission denied/);
 });

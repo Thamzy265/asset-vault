@@ -19,7 +19,8 @@ import { freshDatabase } from "./support/fresh-database.ts";
 // is fixed, so the marker must then be removed). Tests in the "spec question"
 // block describe CURRENT behaviour the design note is silent on; they are not
 // endorsements and should be rewritten when the lead decides the rule.
-let db: Kysely<Database>;
+let db: Kysely<Database>; // as vault_migrator (owner): setup and raw checks
+let appDb: Kysely<Database>; // as vault_app: the repository, as web and worker run it
 let drop: () => Promise<void>;
 let url: string;
 let logged: Array<{ level: string; msg: string; fields: Record<string, unknown> }>;
@@ -45,7 +46,8 @@ beforeAll(async () => {
   db = createDb(url);
   await migrateUp(db);
   logged = [];
-  people = peopleRepository(db, { log: (level, msg, fields = {}) => logged.push({ level, msg, fields }) });
+  appDb = createDb(fresh.appUrl);
+  people = peopleRepository(appDb, { log: (level, msg, fields = {}) => logged.push({ level, msg, fields }) });
   const seed = await db.insertInto("people").values([{ display_name: "A" }, { display_name: "B" }, { display_name: "C" }]).returning("id").execute();
   admin = await user("admin", seed[0]!.id);
   bea = await user("member", seed[1]!.id);
@@ -55,6 +57,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await db?.destroy();
+  await appDb?.destroy();
   await drop?.();
 });
 

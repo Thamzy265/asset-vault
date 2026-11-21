@@ -1,6 +1,12 @@
 name: asset-vault
 
-x-database-url: &database-url postgres://${POSTGRES_USER:-vault}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (copy .env.example)}@postgres:5432/${POSTGRES_DB:-vault}
+# Database logins (design note M1.2, decision 3). POSTGRES_USER is the bootstrap
+# superuser: only the Postgres image and an admin use it. The migrate service
+# connects as vault_migrator (owns the schema); web and worker as vault_app
+# (no superuser, owns nothing). The roles are created on the first start of an
+# empty volume by packages/db/initdb/10-vault-roles.sh.
+x-migrator-url: &migrator-url postgres://vault_migrator:${VAULT_MIGRATOR_PASSWORD:?Set VAULT_MIGRATOR_PASSWORD in .env (copy .env.example)}@postgres:5432/${POSTGRES_DB:-vault}
+x-app-url: &app-url postgres://vault_app:${VAULT_APP_PASSWORD:?Set VAULT_APP_PASSWORD in .env (copy .env.example)}@postgres:5432/${POSTGRES_DB:-vault}
 
 services:
   postgres:
@@ -10,6 +16,11 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-vault}
       POSTGRES_DB: ${POSTGRES_DB:-vault}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (copy .env.example)}
+      VAULT_MIGRATOR_PASSWORD: ${VAULT_MIGRATOR_PASSWORD:?Set VAULT_MIGRATOR_PASSWORD in .env (copy .env.example)}
+      VAULT_APP_PASSWORD: ${VAULT_APP_PASSWORD:?Set VAULT_APP_PASSWORD in .env (copy .env.example)}
+    configs:
+      - source: vault-roles
+        target: /docker-entrypoint-initdb.d/10-vault-roles.sh
     # No ports: Postgres is reachable only from the other services.
     # No cap_drop: its entrypoint starts as root and needs capabilities to drop to the postgres user.
     volumes:
@@ -34,7 +45,7 @@ services:
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     environment:
-      DATABASE_URL: *database-url
+      DATABASE_URL: *migrator-url
     depends_on:
       postgres:
         condition: service_healthy
@@ -48,7 +59,7 @@ services:
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     environment:
-      DATABASE_URL: *database-url
+      DATABASE_URL: *app-url
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,7 +81,7 @@ services:
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     environment:
-      DATABASE_URL: *database-url
+      DATABASE_URL: *app-url
     ports:
       - "127.0.0.1:${WEB_PORT:-3000}:3000"
     depends_on:
@@ -87,3 +98,7 @@ services:
 
 volumes:
   pgdata:
+
+configs:
+  vault-roles:
+    file: ./packages/db/initdb/10-vault-roles.sh

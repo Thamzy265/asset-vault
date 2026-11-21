@@ -98,19 +98,27 @@ export async function up(db: Kysely<unknown>): Promise<void> {
 
   await sql`
     create function audit_log_retention(out deleted bigint, out ip_prefixes_cleared bigint, out users_deleted bigint)
-    language plpgsql as $$
+    language plpgsql
+    -- Decision 3: runs with its owner's rights (vault_migrator, who runs the migrations), so the
+    -- app role may call it without holding UPDATE or DELETE on the log. A fixed search_path and
+    -- schema-qualified names stop a caller from substituting their own objects.
+    security definer
+    set search_path = pg_catalog, pg_temp
+    as $$
     begin
       perform set_config('vault.audit_retention', 'on', true);
-      delete from audit_log where at < now() - interval '2 years';
+      delete from public.audit_log where at < now() - interval '2 years';
       get diagnostics deleted = row_count;
-      update audit_log set ip_prefix = null where ip_prefix is not null and at < now() - interval '90 days';
+      update public.audit_log set ip_prefix = null where ip_prefix is not null and at < now() - interval '90 days';
       get diagnostics ip_prefixes_cleared = row_count;
       perform set_config('vault.audit_retention', 'off', true);
-      delete from users u
+      delete from public.users u
         where u.deactivated_at is not null
-          and not exists (select 1 from audit_log a where a.actor_user_id = u.id);
+          and not exists (select 1 from public.audit_log a where a.actor_user_id = u.id);
       get diagnostics users_deleted = row_count;
     end $$`.execute(db);
+  // Functions are executable by PUBLIC by default; this one only by the roles granted in 0004.
+  await sql`revoke execute on function audit_log_retention() from public`.execute(db);
 }
 
 /**
