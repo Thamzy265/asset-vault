@@ -161,12 +161,50 @@ describe("raw database access bypasses stay closed in apps/**", () => {
       'import pkg from "../../package.json" with { type: "json" };',
       'import { getHealth } from "./health.ts";',
       'import { NextResponse } from "next/server";',
-      'import { PgBoss } from "pg-boss";',
       'import { readFileSync } from "node:fs";',
       'const page = await import("./page.tsx");',
     ]) {
       expect(await restricted(code, SRC), code).toEqual([]);
     }
+  });
+
+  // Review L3: pg-boss's getDb().executeSql(...) runs any SQL as vault_app with no visibility check.
+  it("pg-boss may be imported only by apps/worker/src/worker.ts", async () => {
+    const WORKER = "apps/worker/src/worker.ts";
+    expect(await restricted('import { PgBoss } from "pg-boss";', WORKER)).toEqual([]);
+    for (const file of ["apps/worker/src/x.ts", "apps/worker/src/main.ts", "apps/web/src/server/x.ts", "apps/worker/test/x.test.ts", "apps/worker/src/worker.mts"]) {
+      for (const code of [
+        'import { PgBoss } from "pg-boss";',
+        'import PgBoss from "pg-boss";',
+        'export { PgBoss } from "pg-boss";',
+        'const m = await import("pg-boss");',
+        'import x from "pg-boss/dist/index.js";',
+      ]) {
+        expect(await restricted(code, file), `${file}: ${code}`).not.toEqual([]);
+      }
+    }
+  });
+
+  it("getDb and executeSql member access is rejected everywhere in apps/**, worker.ts included", async () => {
+    for (const file of ["apps/worker/src/worker.ts", "apps/worker/src/x.ts", "apps/web/src/server/x.ts", "apps/worker/test/x.test.ts"]) {
+      for (const code of [
+        'await boss.getDb().executeSql("select 1");',
+        "const db = boss.getDb();",
+        'await db.executeSql("delete from people", []);',
+        "const f = boss.getDb;",
+        'const g = boss["getDb"];',
+        'const h = db["executeSql"];',
+        "const { getDb } = boss;",
+        "const { executeSql: run } = db;",
+        "await running.boss?.getDb()?.executeSql('select 1');",
+      ]) {
+        expect(await restricted(code, file), `${file}: ${code}`).not.toEqual([]);
+      }
+    }
+  });
+
+  it("the web app's own getDb() (an opaque handle) is still allowed as a plain call", async () => {
+    expect(await restricted('import { getDb } from "../../../../server/db.ts";\nexport const h = () => getDb();', "apps/web/src/app/api/v1/health/route.ts")).toEqual([]);
   });
 
   it("inline ESLint config comments have no effect in apps/** (L5: linterOptions.noInlineConfig), and still work everywhere else", async () => {
