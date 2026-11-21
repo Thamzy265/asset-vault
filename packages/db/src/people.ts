@@ -1,4 +1,5 @@
 import type { Kysely, Selectable } from "kysely";
+import { z } from "zod";
 import {
   auditChange,
   auditViews,
@@ -6,6 +7,7 @@ import {
   checkViewer,
   defaultRepositoryLog,
   NotFoundError,
+  parseInput,
   PersonInUseError,
   visibleTo,
   type RepositoryOptions,
@@ -13,6 +15,7 @@ import {
 } from "./access.ts";
 import { kyselyOf, type DbLike } from "./handle.ts";
 import { errorCode } from "./log.ts";
+import { VISIBILITIES } from "./migrations/record-columns.ts";
 import type { Database, PeopleTable, Visibility } from "./schema.ts";
 
 const ENTITY = "person";
@@ -37,6 +40,25 @@ export type NewPerson = {
 };
 
 export type PersonChanges = Partial<NewPerson>;
+
+/**
+ * Runtime shape of the inputs (B2): wrong types and unknown fields are refused
+ * with ValidationError; an explicit visibility must be one of the enum, never
+ * defaulted (B5). Owner ids are checked separately: a malformed one is
+ * not-found, like any id.
+ */
+const newPersonSchema = z.strictObject({
+  displayName: z.string(),
+  relationship: z.string().nullable().optional(),
+  ownerPersonId: z.string().nullable().optional(),
+  visibility: z.enum(VISIBILITIES).optional(),
+});
+const personChangesSchema = newPersonSchema.partial();
+
+/** A malformed owner id is not-found; a well-formed one is returned in lowercase (B4). */
+function ownerIdOf(ownerPersonId: string | null | undefined): string | null | undefined {
+  return ownerPersonId === undefined || ownerPersonId === null ? ownerPersonId : checkId(ownerPersonId);
+}
 
 /** The writable columns, as stored. Audit rows name these columns, never their values. */
 type PersonColumns = {
@@ -95,8 +117,10 @@ export function peopleRepository(handle: DbLike, options: RepositoryOptions = {}
   }
 
   return {
-    async create(viewer: Viewer, input: NewPerson): Promise<Person> {
+    async create(viewer: Viewer, newPerson: NewPerson): Promise<Person> {
       const v = checkViewer(viewer);
+      const parsed = parseInput(newPersonSchema, newPerson);
+      const input: NewPerson = { ...parsed, ownerPersonId: ownerIdOf(parsed.ownerPersonId) };
       return db.transaction().execute(async (trx) => {
         await assertOwnerVisible(trx, v, input.ownerPersonId);
         const values = columnsOf(input);
@@ -106,7 +130,7 @@ export function peopleRepository(handle: DbLike, options: RepositoryOptions = {}
             display_name: input.displayName,
             relationship: input.relationship ?? null,
             owner_person_id: input.ownerPersonId ?? null,
-            ...(input.visibility && { visibility: input.visibility }),
+            ...(input.visibility !== undefined && { visibility: input.visibility }),
             created_by_user_id: v.userId,
             updated_by_user_id: v.userId,
           })
@@ -143,13 +167,16 @@ export function peopleRepository(handle: DbLike, options: RepositoryOptions = {}
       return rows.map(toPerson);
     },
 
-    async update(viewer: Viewer, id: string, changes: PersonChanges): Promise<Person> {
+    async update(viewer: Viewer, id: string, personChanges: PersonChanges): Promise<Person> {
       const v = checkViewer(viewer);
+      const personId = checkId(id);
+      const parsed = parseInput(personChangesSchema, personChanges);
+      const changes: PersonChanges = { ...parsed, ownerPersonId: ownerIdOf(parsed.ownerPersonId) };
       return db.transaction().execute(async (trx) => {
         const current = await trx
           .selectFrom("people")
           .selectAll()
-          .where("id", "=", checkId(id))
+          .where("id", "=", personId)
           .where(visibleTo(v, "people"))
           .forUpdate()
           .executeTakeFirst();

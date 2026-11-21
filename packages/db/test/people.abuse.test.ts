@@ -4,7 +4,7 @@ import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb } from "../src/client.ts";
 import { migrateUp } from "../src/migrate.ts";
-import { NotFoundError, PersonInUseError, type Viewer } from "../src/access.ts";
+import { NotFoundError, PersonInUseError, ValidationError, type Viewer } from "../src/access.ts";
 import { peopleRepository, type Person } from "../src/people.ts";
 import type { Database } from "../src/schema.ts";
 import { freshDatabase } from "./support/fresh-database.ts";
@@ -389,9 +389,8 @@ describe("transaction integrity and concurrency", () => {
     await expect(people.remove(carl, a.id)).rejects.toBeInstanceOf(PersonInUseError);
   });
 
-  // CONFIRMED BUG B4 (low): the "did anything change" check compares id strings case-sensitively, so
-  // re-sending the current owner in uppercase writes a phantom update row (and moves updated_at).
-  it.fails("B4: uppercase spelling of the owner id that is already the owner is a no-op (same person, same value), not a phantom update", async () => {
+  // Was CONFIRMED BUG B4 (low): ids are now normalised to lowercase at the repository boundary.
+  it("B4: uppercase spelling of the owner id that is already the owner is a no-op (same person, same value), not a phantom update", async () => {
     const owner = await people.create(carl, { displayName: "Owner for case" });
     const child = await people.create(carl, { displayName: "Child for case", ownerPersonId: owner.id });
     const before = await auditCount();
@@ -493,21 +492,21 @@ describe("name and relationship inputs", () => {
     expect(await peopleCount()).toBe(before);
   });
 
-  it("visibility outside family/private is refused at the database (including the reserved 'restricted' and wrong case)", async () => {
+  it("visibility outside family/private is refused by the repository (including the reserved 'restricted' and wrong case); the database check is in schema.abuse.test.ts", async () => {
     for (const visibility of ["restricted", "PRIVATE", "Family", "public", " private"]) {
-      await expect(make("V", { visibility: visibility as never })).rejects.toMatchObject({ code: "23514" });
+      await expect(make("V", { visibility: visibility as never })).rejects.toBeInstanceOf(ValidationError);
       const owned = await make("V2");
-      await expect(people.update(carl, owned.id, { visibility: visibility as never })).rejects.toMatchObject({ code: "23514" });
+      await expect(people.update(carl, owned.id, { visibility: visibility as never })).rejects.toBeInstanceOf(ValidationError);
     }
   });
 
-  // CONFIRMED BUG B5 (low-medium, fails open): create uses `input.visibility && {...}`, so an empty or
-  // falsy visibility ("", null, 0, false) silently becomes the default 'family' (the LESS private
-  // choice) instead of being refused, while update refuses "" with a check violation.
-  it.fails("B5: create with a falsy but explicit visibility ('' / null / 0 / false) is refused, not silently made family", async () => {
+  // Was CONFIRMED BUG B5 (low-medium, fails open): an explicit visibility is checked, never defaulted.
+  it("B5: create with a falsy but explicit visibility ('' / null / 0 / false) is refused, not silently made family", async () => {
+    const before = await peopleCount();
     for (const visibility of ["", null, 0, false]) {
-      await expect(make("V3", { visibility: visibility as never }), String(visibility)).rejects.toBeTruthy();
+      await expect(make("V3", { visibility: visibility as never }), String(visibility)).rejects.toBeInstanceOf(ValidationError);
     }
+    expect(await peopleCount()).toBe(before);
   });
 
   it("a person that fails the DB check leaves a clean audit trail: no create row for an id that does not exist", async () => {
@@ -524,12 +523,11 @@ describe("name and relationship inputs", () => {
     }
   });
 
-  // CONFIRMED BUG B2 (low): the repository does not check runtime types, so a non-string name is
-  // coerced by the driver and stored ("{}" for an object, a Postgres array literal for an array).
-  it.fails("B2: a non-string displayName (object, array, number, boolean) is refused instead of being coerced to text", async () => {
+  // Was CONFIRMED BUG B2 (low): every input is type-checked at the repository boundary.
+  it("B2: a non-string displayName (object, array, number, boolean) is refused instead of being coerced to text", async () => {
     const before = await peopleCount();
     for (const bad of [{ a: 1 }, ["x", "y"], 42, true]) {
-      await expect(make(bad as never), JSON.stringify(bad)).rejects.toBeTruthy();
+      await expect(make(bad as never), JSON.stringify(bad)).rejects.toBeInstanceOf(ValidationError);
     }
     expect(await peopleCount()).toBe(before);
   });

@@ -3,7 +3,7 @@ import { sql, type Kysely } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb } from "../src/client.ts";
 import { migrateUp } from "../src/migrate.ts";
-import { NotFoundError, PersonInUseError, type Viewer } from "../src/access.ts";
+import { NotFoundError, PersonInUseError, ValidationError, type Viewer } from "../src/access.ts";
 import { peopleRepository, type Person } from "../src/people.ts";
 import type { Database } from "../src/schema.ts";
 import { freshDatabase } from "./support/fresh-database.ts";
@@ -244,5 +244,57 @@ describe("reads and their view rows", () => {
       expect(line).toMatchObject({ level: "error", msg: "audit view write failed", fields: { entityType: "person", code: "P0001" } });
     }
     expect(JSON.stringify(logged)).not.toMatch(/Secretname|audit insert failed/);
+  });
+});
+
+describe("input checks at the repository boundary (B2, B4, B5)", () => {
+  const bad = <T>(value: unknown) => value as T;
+
+  it("create refuses a non-object input, unknown fields and wrongly typed fields with a ValidationError naming the field, never its value", async () => {
+    const before = (await auditRows()).length;
+    const cases: Array<[unknown, string[]]> = [
+      [null, ["(input)"]],
+      ["Jane", ["(input)"]],
+      [[], ["(input)"]],
+      [{}, ["displayName"]],
+      [{ displayName: "Jane Valuename", relationship: 7 }, ["relationship"]],
+      [{ displayName: "Jane Valuename", ownerPersonId: 7 }, ["ownerPersonId"]],
+      [{ displayName: "Jane Valuename", visibility: null }, ["visibility"]],
+      [{ displayName: "Jane Valuename", createdByUserId: admin.userId }, ["(unknown field)"]],
+      [{ displayName: "Jane Valuename", id: randomUUID() }, ["(unknown field)"]],
+    ];
+    for (const [input, fields] of cases) {
+      const error = await people.create(admin, bad(input)).catch((e: unknown) => e);
+      expect(error, JSON.stringify(input)).toBeInstanceOf(ValidationError);
+      expect((error as ValidationError).fields, JSON.stringify(input)).toEqual(fields);
+      expect((error as Error).message).not.toMatch(/Valuename|Jane/);
+    }
+    expect((await auditRows()).length).toBe(before);
+  });
+
+  it("update refuses a non-object change set, unknown fields and wrongly typed fields, and changes nothing", async () => {
+    const p = await people.create(admin, { displayName: "Typed" });
+    for (const changes of [null, "x", [], { displayName: 1 }, { relationship: {} }, { ownerPersonId: true }, { visibility: "" }, { updatedByUserId: admin.userId }]) {
+      await expect(people.update(admin, p.id, bad(changes)), JSON.stringify(changes)).rejects.toBeInstanceOf(ValidationError);
+    }
+    expect(await people.get(admin, p.id)).toMatchObject({ displayName: "Typed", updatedAt: p.updatedAt });
+  });
+
+  it("a malformed owner id is not-found, the same as an unknown one (ids can't be probed)", async () => {
+    await expect(people.create(admin, { displayName: "X", ownerPersonId: "not-a-uuid" })).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("ids are compared case-insensitively: an uppercase viewer, record or owner id is the same id, stored and returned in lowercase", async () => {
+    const owner = await people.create(admin, { displayName: "Case owner" });
+    const upperViewer: Viewer = { userId: admin.userId.toUpperCase(), role: "admin", personId: admin.personId!.toUpperCase() };
+    const child = await people.create(upperViewer, { displayName: "Case child", ownerPersonId: owner.id.toUpperCase() });
+    expect(child.ownerPersonId).toBe(owner.id);
+    expect(child.createdByUserId).toBe(admin.userId);
+    const before = (await auditRows(child.id)).length;
+    await people.update(upperViewer, child.id.toUpperCase(), { ownerPersonId: owner.id.toUpperCase() });
+    expect((await auditRows(child.id)).length).toBe(before);
+    const privateOfBea = await people.create(admin, { displayName: "Case private", ownerPersonId: bea.personId, visibility: "private" });
+    const upperBea: Viewer = { ...bea, userId: bea.userId.toUpperCase(), personId: bea.personId!.toUpperCase() };
+    await expect(people.get(upperBea, privateOfBea.id.toUpperCase())).resolves.toMatchObject({ id: privateOfBea.id });
   });
 });

@@ -106,6 +106,7 @@ describe("what @vault/db exports to apps (regression lock)", () => {
         "readSchemaVersion",
         "recordHeartbeat",
         "runAuditRetention",
+        "ValidationError",
         "waitForDatabase",
         "waitForDatabaseReady",
       ].sort(),

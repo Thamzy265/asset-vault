@@ -31,15 +31,30 @@ export class PersonInUseError extends Error {
   }
 }
 
+/**
+ * The input is malformed (wrong type, unknown field, or a value the rules
+ * refuse). `fields` names the input fields at fault, never their values.
+ */
+export class ValidationError extends Error {
+  override name = "ValidationError";
+  readonly fields: readonly string[];
+  constructor(fields: readonly string[]) {
+    super(`Invalid input: ${fields.join(", ")}`);
+    this.fields = Object.freeze([...fields]);
+  }
+}
+
 export type LogFn = (level: LogLevel, msg: string, fields?: Record<string, unknown>) => void;
 export type RepositoryOptions = { log?: LogFn };
 export const defaultRepositoryLog: LogFn = (level, msg, fields) => defaultLog(level, msg, fields);
 
 const uuid = z.uuid();
+/** Ids are compared case-insensitively: normalised to lowercase, as Postgres returns them (B4). */
+const lowerUuid = uuid.transform((id) => id.toLowerCase());
 const viewerSchema = z.object({
-  userId: uuid,
+  userId: lowerUuid,
   role: z.enum(["admin", "member"]),
-  personId: uuid.nullable(),
+  personId: lowerUuid.nullable(),
 });
 
 /** Throws on a malformed viewer (e.g. an unknown role) rather than guessing what it may see. */
@@ -49,10 +64,26 @@ export function checkViewer(viewer: Viewer): Viewer {
   return result.data;
 }
 
-/** A malformed id can't name a record: treat it as not found, the same as an invisible one. */
+/** A malformed id can't name a record: treat it as not found, the same as an invisible one. Returns it in lowercase. */
 export function checkId(id: string): string {
-  if (!uuid.safeParse(id).success) throw new NotFoundError();
-  return id;
+  const result = lowerUuid.safeParse(id);
+  if (!result.success) throw new NotFoundError();
+  return result.data;
+}
+
+/**
+ * Runtime type check of a repository input (B2): throws ValidationError naming
+ * the fields at fault. Unknown fields are refused, never ignored.
+ */
+export function parseInput<T>(schema: z.ZodType<T>, input: unknown): T {
+  const result = schema.safeParse(input);
+  if (result.success) return result.data;
+  const fields = new Set<string>();
+  for (const issue of result.error.issues) {
+    if (issue.code === "unrecognized_keys") fields.add("(unknown field)");
+    else fields.add(typeof issue.path[0] === "string" ? issue.path[0] : "(input)");
+  }
+  throw new ValidationError([...fields]);
 }
 
 /** Tables that carry the shared record columns (owner, visibility, ...). */
