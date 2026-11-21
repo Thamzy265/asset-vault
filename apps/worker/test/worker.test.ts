@@ -1,4 +1,4 @@
-import { DatabaseUnavailableError, closeDatabase, openDatabase, readHeartbeat } from "@vault/db";
+import { DatabaseUnavailableError, closeDatabase, migrateUp, openDatabase, readHeartbeat } from "@vault/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { freshDatabase } from "../../../packages/db/test/support/fresh-database.ts";
 import { rawQuery } from "../../../packages/db/test/support/raw-sql.ts";
@@ -20,7 +20,22 @@ describe("startWorker (real Postgres)", () => {
     await drop?.();
   });
 
+  it("does not migrate at start (the one-shot migrate service does, review L7)", async () => {
+    const fresh = await freshDatabase();
+    const started = await startWorker({ databaseUrl: fresh.url });
+    try {
+      const rows = await rawQuery(fresh.url, "select to_regclass('public.kysely_migration') as t, to_regclass('public.audit_log') as a");
+      expect(rows[0]).toEqual({ t: null, a: null });
+    } finally {
+      await started.stop();
+      await fresh.drop();
+    }
+  });
+
   it("schedules the heartbeat and records it when the job runs", async () => {
+    const migrating = openDatabase(url);
+    await migrateUp(migrating);
+    await closeDatabase(migrating);
     worker = await startWorker({ databaseUrl: url });
 
     const schedules = await worker.boss.getSchedules(HEARTBEAT_QUEUE);

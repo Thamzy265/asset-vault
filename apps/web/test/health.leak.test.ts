@@ -20,9 +20,11 @@ describe("health response does not leak (tester, abuse case: read secrets via he
       },
       readHeartbeat: async () => new Date(),
       version: "1.2.3",
+      readSchemaVersion: async () => "0003_audit_log",
+      expectedSchemaVersion: "0003_audit_log",
     });
     expect(result.httpStatus).toBe(503);
-    expect(Object.keys(result.body).sort()).toEqual(["db", "status", "version", "workerHeartbeat"]);
+    expect(Object.keys(result.body).sort()).toEqual(["db", "schema", "status", "version", "workerHeartbeat"]);
     assertNothingSensitive(JSON.stringify(result.body));
   });
 
@@ -33,9 +35,11 @@ describe("health response does not leak (tester, abuse case: read secrets via he
         throw new Error(URL_WITH_SECRET);
       },
       version: "1.2.3",
+      readSchemaVersion: async () => "0003_audit_log",
+      expectedSchemaVersion: "0003_audit_log",
     });
     expect(result.httpStatus).toBe(200);
-    expect(Object.keys(result.body).sort()).toEqual(["db", "status", "version", "workerHeartbeat"]);
+    expect(Object.keys(result.body).sort()).toEqual(["db", "schema", "status", "version", "workerHeartbeat"]);
     assertNothingSensitive(JSON.stringify(result.body));
   });
 
@@ -46,6 +50,8 @@ describe("health response does not leak (tester, abuse case: read secrets via he
       },
       readHeartbeat: async () => new Date("2026-11-21T10:00:00.000Z"),
       version: "1.2.3",
+      readSchemaVersion: async () => "0003_audit_log",
+      expectedSchemaVersion: "0003_audit_log",
     });
     expect(result.body.workerHeartbeat).toBeNull();
   });
@@ -67,7 +73,7 @@ describe("health response does not leak (tester, abuse case: read secrets via he
       const text = await res.text();
       assertNothingSensitive(text);
       assertNothingSensitive(headers);
-      expect(JSON.parse(text)).toEqual({ status: "error", db: "down", version: expect.any(String), workerHeartbeat: null });
+      expect(JSON.parse(text)).toEqual({ status: "error", db: "down", version: expect.any(String), schema: { expected: expect.any(String), applied: null }, workerHeartbeat: null });
     });
 
     it("503 for a URL pg cannot parse (TypeError path) is the same clean body", async () => {

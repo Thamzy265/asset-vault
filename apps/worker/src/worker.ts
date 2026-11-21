@@ -1,4 +1,4 @@
-import { closeDatabase, log, migrateUp, openDatabase, recordHeartbeat, runAuditRetention, waitForDatabaseReady, type WaitOptions } from "@vault/db";
+import { closeDatabase, log, openDatabase, recordHeartbeat, runAuditRetention, waitForDatabaseReady, type WaitOptions } from "@vault/db";
 import { PgBoss } from "pg-boss";
 import { AUDIT_RETENTION_CRON, AUDIT_RETENTION_QUEUE, runAuditRetentionJob } from "./audit-retention-job.ts";
 import { HEARTBEAT_CRON, HEARTBEAT_QUEUE, runHeartbeat } from "./heartbeat-job.ts";
@@ -15,18 +15,16 @@ export type RunningWorker = {
 };
 
 /**
- * Waits for Postgres (backoff, ~60 s), applies pending migrations, starts
- * pg-boss and schedules the heartbeat and the nightly audit retention.
- * Throws DatabaseUnavailableError if
- * Postgres never answers, or at once if it refuses the credentials or
- * database name, so main() can exit non-zero.
+ * Waits for Postgres (backoff, ~60 s), starts pg-boss and schedules the
+ * heartbeat and the nightly audit retention. It does not migrate: the one-shot
+ * `migrate` Compose service does, before the worker starts (review L7).
+ * Throws DatabaseUnavailableError if Postgres never answers, or at once if it
+ * refuses the credentials or database name, so main() can exit non-zero.
  */
 export async function startWorker(options: WorkerOptions): Promise<RunningWorker> {
   const db = openDatabase(options.databaseUrl, { maxConnections: 2 });
   try {
     await waitForDatabaseReady(db, options.wait);
-    const applied = await migrateUp(db);
-    log("info", "migrations applied", { migrations: applied });
   } catch (error) {
     await closeDatabase(db);
     throw error;

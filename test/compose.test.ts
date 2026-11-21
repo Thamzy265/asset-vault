@@ -29,6 +29,8 @@ type Service = {
   init?: boolean;
   security_opt?: string[];
   cap_drop?: string[];
+  command?: string[];
+  build?: { dockerfile?: string };
 };
 
 async function config(env: Record<string, string>): Promise<{ services: Record<string, Service> }> {
@@ -113,10 +115,30 @@ describe("docker-compose.yml trust boundaries (tester)", () => {
   });
 });
 
-describe("container hardening and pinned base images (reviewer L5)", () => {
-  it("web and worker run with an init process, no new privileges and no Linux capabilities", async () => {
+describe("migration gate (review L7)", () => {
+  it("a one-shot migrate service runs the migrate CLI from the worker image, once, after Postgres is healthy", async () => {
+    const { services } = await config({ POSTGRES_PASSWORD: "pw12345" });
+    const migrate = services.migrate;
+    expect(migrate?.build?.dockerfile).toBe("apps/worker/Dockerfile");
+    expect(migrate?.command).toEqual(["node", "packages/db/src/cli.ts", "up"]);
+    expect(migrate?.restart ?? "no").toBe("no");
+    expect(migrate?.depends_on?.postgres?.condition).toBe("service_healthy");
+    expect(migrate?.environment?.DATABASE_URL).toBe("postgres://vault:pw12345@postgres:5432/vault");
+    expect(migrate?.ports ?? []).toEqual([]);
+  });
+
+  it("web and worker start only after migrate completed successfully", async () => {
     const { services } = await config({ POSTGRES_PASSWORD: "pw12345" });
     for (const name of ["web", "worker"]) {
+      expect(services[name]?.depends_on?.migrate?.condition, name).toBe("service_completed_successfully");
+    }
+  });
+});
+
+describe("container hardening and pinned base images (reviewer L5)", () => {
+  it("web, worker and migrate run with an init process, no new privileges and no Linux capabilities", async () => {
+    const { services } = await config({ POSTGRES_PASSWORD: "pw12345" });
+    for (const name of ["web", "worker", "migrate"]) {
       expect(services[name]?.init, name).toBe(true);
       expect(services[name]?.security_opt, name).toContain("no-new-privileges:true");
       expect(services[name]?.cap_drop, name).toEqual(["ALL"]);

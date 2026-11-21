@@ -1,0 +1,13 @@
+# Used by e2e/migration-gate.spec.ts: runs a throwaway copy of the stack under
+# another project name with the images already built for the stack under test,
+# so nothing is rebuilt or pulled.
+services:
+  migrate:
+    image: ${VAULT_IMAGES:?}-migrate
+    pull_policy: never
+  worker:
+    image: ${VAULT_IMAGES:?}-worker
+    pull_policy: never
+  web:
+    image: ${VAULT_IMAGES:?}-web
+    pull_policy: never

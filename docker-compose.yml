@@ -21,6 +21,24 @@ services:
       retries: 5
       start_period: 20s
 
+  # One-shot: applies pending migrations, then exits. web and worker start only
+  # after it exits 0, so a failed migration keeps the old schema and no new code
+  # runs against it (review L7). Same image as the worker.
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    command: ["node", "packages/db/src/cli.ts", "up"]
+    restart: "no"
+    init: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    environment:
+      DATABASE_URL: *database-url
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   worker:
     build:
       context: .
@@ -34,6 +52,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "node", "apps/worker/src/healthcheck.ts"]
       interval: 30s
@@ -56,6 +76,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/v1/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
       interval: 15s

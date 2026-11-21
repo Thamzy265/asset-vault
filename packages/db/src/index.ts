@@ -5,7 +5,7 @@ export { pingDatabase } from "./client.ts";
 export { closeDatabase, openDatabase, type DbHandle } from "./handle.ts";
 export { ConfigError, loadDbConfig, type DbConfig } from "./config.ts";
 export { readHeartbeat, recordHeartbeat } from "./heartbeat.ts";
-export { migrateDown, migrateUp } from "./migrate.ts";
+export { EXPECTED_SCHEMA_VERSION, migrateDown, migrateUp, readSchemaVersion } from "./migrate.ts";
 export { migrations } from "./migrations/index.ts";
 export type { AuditAction, AuditDetails, Role, Visibility } from "./schema.ts";
 export { NotFoundError, PersonInUseError, type RepositoryOptions, type Viewer } from "./access.ts";
