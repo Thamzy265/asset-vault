@@ -69,11 +69,19 @@ const viewerSchema = z.object({
   personId: lowerUuid.nullable(),
 });
 
+declare const parsed: unique symbol;
+/**
+ * A viewer checkViewer has parsed (review C2). The helpers below take only
+ * this, so each repository function parses its viewer once and passes the
+ * result through.
+ */
+export type CheckedViewer = Viewer & { readonly [parsed]: true };
+
 /** Throws on a malformed viewer (e.g. an unknown role) rather than guessing what it may see. */
-export function checkViewer(viewer: Viewer): Viewer {
+export function checkViewer(viewer: Viewer): CheckedViewer {
   const result = viewerSchema.safeParse(viewer);
   if (!result.success) throw new TypeError("Invalid viewer");
-  return result.data;
+  return result.data as CheckedViewer;
 }
 
 /** A malformed id can't name a record: treat it as not found, the same as an invisible one. Returns it in lowercase. */
@@ -109,18 +117,17 @@ export type RecordTable = { [K in keyof Database]: Database[K] extends RecordCol
 const SELF_OWNED: ReadonlySet<RecordTable> = new Set<RecordTable>(["people"]);
 
 /** The viewer owns the row: it is owned by the viewer's person, or (people) it is that person. */
-export function isOwner(viewer: Viewer, table: RecordTable, row: { id: string; owner_person_id: string | null }): boolean {
-  const v = checkViewer(viewer);
-  if (v.personId === null) return false;
-  return row.owner_person_id === v.personId || (SELF_OWNED.has(table) && row.id === v.personId);
+export function isOwner(viewer: CheckedViewer, table: RecordTable, row: { id: string; owner_person_id: string | null }): boolean {
+  if (viewer.personId === null) return false;
+  return row.owner_person_id === viewer.personId || (SELF_OWNED.has(table) && row.id === viewer.personId);
 }
 
 /**
  * Decision 1: changing the owner or the visibility, and deleting, are for the
  * owner's linked user and admins only.
  */
-export function canManage(viewer: Viewer, table: RecordTable, row: { id: string; owner_person_id: string | null }): boolean {
-  return checkViewer(viewer).role === "admin" || isOwner(viewer, table, row);
+export function canManage(viewer: CheckedViewer, table: RecordTable, row: { id: string; owner_person_id: string | null }): boolean {
+  return viewer.role === "admin" || isOwner(viewer, table, row);
 }
 
 /**
@@ -129,7 +136,7 @@ export function canManage(viewer: Viewer, table: RecordTable, row: { id: string;
  * signed-in member.
  */
 export function canEdit(
-  viewer: Viewer,
+  viewer: CheckedViewer,
   table: RecordTable,
   row: { id: string; owner_person_id: string | null; visibility: string },
 ): boolean {
@@ -140,9 +147,8 @@ export function canEdit(
  * Decision 1: a member may create records owned by themselves only; admins
  * may create records for anyone, or with no owner.
  */
-export function canCreateFor(viewer: Viewer, ownerPersonId: string | null): boolean {
-  const v = checkViewer(viewer);
-  return v.role === "admin" || (v.personId !== null && ownerPersonId === v.personId);
+export function canCreateFor(viewer: CheckedViewer, ownerPersonId: string | null): boolean {
+  return viewer.role === "admin" || (viewer.personId !== null && ownerPersonId === viewer.personId);
 }
 
 /**
@@ -153,8 +159,7 @@ export function canCreateFor(viewer: Viewer, ownerPersonId: string | null): bool
  * Every repository read and write filters with this, so an invisible record
  * looks exactly like a missing one.
  */
-export function visibleTo(viewer: Viewer, table: RecordTable): RawBuilder<boolean> {
-  const v = checkViewer(viewer);
+export function visibleTo(v: CheckedViewer, table: RecordTable): RawBuilder<boolean> {
   if (v.role === "admin") return sql<boolean>`true`;
   const visibility = sql.ref(`${table}.visibility`);
   if (v.personId === null) return sql<boolean>`${visibility} = 'family'`;
@@ -170,7 +175,7 @@ export function visibleTo(viewer: Viewer, table: RecordTable): RawBuilder<boolea
  */
 export async function auditChange(
   trx: Transaction<Database>,
-  viewer: Viewer,
+  viewer: CheckedViewer,
   action: Extract<AuditAction, "create" | "update" | "delete">,
   entityType: string,
   entityId: string,
@@ -195,7 +200,7 @@ export async function auditChange(
 export async function auditViews(
   db: Kysely<Database>,
   log: LogFn,
-  viewer: Viewer,
+  viewer: CheckedViewer,
   entityType: string,
   entityIds: string[],
 ): Promise<void> {

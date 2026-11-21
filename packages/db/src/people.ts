@@ -14,6 +14,7 @@ import {
   parseInput,
   PersonInUseError,
   visibleTo,
+  type CheckedViewer,
   type RepositoryOptions,
   type Viewer,
 } from "./access.ts";
@@ -138,7 +139,7 @@ export function peopleRepository(handle: DbLike, options: RepositoryOptions = {}
   const log = options.log ?? defaultRepositoryLog;
 
   /** An owner the viewer can't see is treated as missing, so owners can't be probed. */
-  async function assertOwnerVisible(trx: Kysely<Database>, viewer: Viewer, ownerId: string | null | undefined) {
+  async function assertOwnerVisible(trx: Kysely<Database>, viewer: CheckedViewer, ownerId: string | null | undefined) {
     if (ownerId === undefined || ownerId === null) return;
     const found = await trx
       .selectFrom("people")
@@ -156,17 +157,11 @@ export function peopleRepository(handle: DbLike, options: RepositoryOptions = {}
       return db.transaction().execute(async (trx) => {
         await assertOwnerVisible(trx, v, input.ownerPersonId);
         if (!canCreateFor(v, input.ownerPersonId ?? null)) throw new ForbiddenError();
+        // Review C2: one column set for the insert and its audit row; fields not given take the column default.
         const values = columnsOf(input);
         const row = await trx
           .insertInto("people")
-          .values({
-            display_name: input.displayName,
-            relationship: input.relationship ?? null,
-            owner_person_id: input.ownerPersonId ?? null,
-            ...(input.visibility !== undefined && { visibility: input.visibility }),
-            created_by_user_id: v.userId,
-            updated_by_user_id: v.userId,
-          })
+          .values({ display_name: input.displayName, ...values, created_by_user_id: v.userId, updated_by_user_id: v.userId })
           .returningAll()
           .executeTakeFirstOrThrow();
         await auditChange(trx, v, "create", ENTITY, row.id, Object.keys(values));
