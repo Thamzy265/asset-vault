@@ -34,8 +34,8 @@ Acceptance criteria are drafted for M1 now; later milestones get theirs (and the
 - [x] **M1.1 Repo and stack skeleton** — app and worker run with one command; check command recorded in Team setup.
   - AC: `docker compose up` starts app, database and worker on a clean machine; health endpoint returns OK.
   - AC: check command (lint + type check + tests) passes in CI-equivalent local run.
-- [ ] **M1.2 Data model foundation** — people, users, roles, visibility, audit log; reversible migrations.
-  - AC: every table has `owner`, `visibility` and timestamps; migrations go up and down cleanly.
+- [x] **M1.2 Data model foundation** — people, users, roles, visibility, audit log; reversible migrations.
+  - AC: every business table (records the family owns, e.g. people) has `owner`, `visibility` and timestamps; system tables (users, audit_log, _meta) have timestamps; migrations go up and down cleanly.
   - AC: every read/write goes through one server-side visibility check (tested).
 - [ ] **M1.3 Sign-in with mandatory 2FA** — two family accounts, admin and member roles.
   - AC: no page or API returns data without a signed-in user with 2FA enrolled.
@@ -97,10 +97,13 @@ Acceptance criteria are drafted for M1 now; later milestones get theirs (and the
 - Passkeys (WebAuthn) — easier, phishing-resistant sign-in — trigger: a family member fails 2FA sign-in 3 times in a month, or the PM asks — noted 2026-11-21 by lead
 - Password reset by email — needs email (M5) — trigger: M5 reminders are live and a user needs a reset — noted 2026-11-21 by lead
 - Admin user-management screen — the server command is enough for 2 users — trigger: a third user is added — noted 2026-11-21 by lead
-- Structured request logs (request id, route, status, duration) for /api/v1 — health alone doesn't need them — trigger: the first /api/v1 endpoint other than health is briefed (M1.2/M1.3) — noted 2026-11-21 by developer
 - Git-history secret scan (e.g. gitleaks) — secretlint scans only the working tree — trigger: the repository is pushed to any remote — noted 2026-11-21 by developer
 - Per-service memory limits in Compose — trigger: idle total in `docker stats` > 1.5 GB — noted 2026-11-21 by developer
 - Upgrade @playwright/test to latest — needs a newer Chromium download — trigger: PM approves `pnpm exec playwright install chromium` under Approved tools — noted 2026-11-21 by developer
 - Upgrade to TypeScript 7 — trigger: a typescript-eslint release whose peer range includes TypeScript 7 — noted 2026-11-21 by developer
 - Writable Next.js cache folder in the web image (tmpfs or a chown of `.next/cache` only) — the app files are read-only by design and nothing uses the cache yet — trigger: the first route that uses revalidate/ISR or next/image — noted 2026-11-21 by reviewer
+- Index on owner_person_id for each business table — FK restrict checks and owner lookups scan the table — trigger: > 10,000 rows in any business table — noted 2026-11-21 by developer
+- Pagination for the people list — returns every visible person — trigger: > 200 rows in people — noted 2026-11-21 by developer
+- Scripted upgrade of a database volume created before the M1.2 roles (create vault_migrator/vault_app, hand tables to vault_migrator, recreate the pgboss schema) — no volume holds real data yet, so README says to recreate it — trigger: people rows > 0 on any volume created before migration 0004 — noted 2026-11-21 by developer
+- Index on audit_log(at) — retention scans by time — trigger: a retention run takes > 1 s or audit_log > 1,000,000 rows — noted 2026-11-21 by reviewer
 

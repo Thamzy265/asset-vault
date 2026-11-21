@@ -13,8 +13,11 @@ Nothing in the app may be reachable without a signed-in user who has 2FA enrolle
   - A user without 2FA enrolled can't reach anything but the enrolment screens.
   - Sign out; sign out of all devices.
   - `GET /api/v1/me` → user id, name, role, person id.
+  - The data layer's `Viewer` is built only from a verified session with 2FA passed (M1.2 decision 7); no other code path constructs one.
   - Every `/api/v1/*` route except `/health` requires a session with 2FA passed; enforced by one middleware plus a per-route test.
-  - Auth events written to `audit_log` (sign_in, sign_in_failed, sign_out, 2fa_enrolled, 2fa_failed, password_changed, backup_code_used).
+  - Auth events written to `audit_log` (sign_in, sign_in_failed, sign_out, 2fa_enrolled, 2fa_failed, password_changed, backup_code_used). `ip_prefix` is recorded on sign_in, sign_in_failed, 2fa_failed and backup_code_used (the events that show where a sign-in attempt came from); M1.2 already allows these four (lead decision after the M1.2 tester round).
+  - Server command `pnpm user:deactivate --email …` (see Privacy).
+  - Structured request logs for `/api/v1` (request id, route, status, duration; no personal data) — the Later trigger "first /api/v1 endpoint other than health" fires with `/me`.
 - Non-functional: passwords hashed with a memory-hard algorithm (scrypt or argon2id, via the library); WCAG 2.2 AA screens; works at 320 px.
 - Non-goals: passkeys, password reset by email (no email yet — admin issues a new setup link), admin user-management screen, Cloudflare Access.
 
@@ -30,6 +33,16 @@ Trivially small: < 10 users, a few sign-ins a day.
 
 ## Data
 Auth tables owned by the auth library (Better Auth: `user`, `session`, `account`, `verification`, `two_factor`), created by **our own Kysely up/down migrations** matching the library's schema, not by the library's CLI (keeps migrations reversible). `users` from M1.2 becomes the library's `user` table (or a 1:1 extension of it — developer picks the cleaner fit and explains in the hand-off). Setup tokens: hashed, single-use, 24 h expiry. Backup codes stored hashed. TOTP secret encrypted at rest with a key from env (`AUTH_ENCRYPTION_KEY`).
+
+## Carried from the M1.2 review (must be in the M1.3 build)
+- (a) `Viewer` becomes a branded type that only the session module can create; app code can't build `{ role: "admin" }` by hand. Test it.
+- (b) Every request rejects a deactivated user (not only sign-in): the session check reads `users.deactivated_at`.
+- (c) Deactivation clears `users.person_id`, so an erasure request for the linked person isn't blocked for 2 years.
+- (d) Any new table that references `users` uses ON DELETE CASCADE or SET NULL (auth tables cascade), so the nightly retention never fails on a deactivated user; test retention with every auth table populated.
+- (f) Fail safe in `packages/db/src/handle.ts`: use the `globalThis` client map only when NODE_ENV is "development" or "test" (anything else, including unset, keeps it module-private). Optional reviewer suggestion, taken.
+- (g) From M1.2 QA: revoke DELETE on `users` from `vault_app` (decision 8: users are deactivated, not deleted; only the SECURITY DEFINER retention function deletes them). Auth tables get grants decided the same way, recorded in the grant-matrix test.
+- (h) From M1.2 QA: README fixes — `vault_app` "owns nothing outside the `pgboss` job-queue schema"; the rollback step shows `applied: null` after rolling back 0004 (grants removed), not "one step behind"; a note that Postgres's own server log can keep row values from refused inserts, so it is treated as personal data (not shipped anywhere, rotated with the container).
+- (e) The API error handler never logs a Postgres `detail`, row values, emails, codes or tokens; errors are logged as code + route + request id only.
 
 ## Options
 ### A: Better Auth (email/password + two-factor plugin), Kysely adapter
@@ -73,7 +86,7 @@ Not legal advice. Lawful basis: PM decides (with D8).
 - Children likely: not as users.
 - Automated decisions: none. Special category: none. New vendors: none (Better Auth is a local library, no service).
 - Private defaults: n/a — no sharing.
-- Export, delete, rectify: removing a user deletes auth rows and sessions; the linked person and audit rows stay (actor shown as "removed user").
+- Export, delete, rectify: removing a user **deactivates** it rather than hard-deleting the row, because the append-only audit log references the user for up to 2 years (raised in the M1.2 hand-off). Deactivation deletes the password hash, the TOTP secret, backup codes, sessions and setup tokens; replaces the email with a non-identifying placeholder; sets `deactivated_at`; and blocks sign-in. The user row (id, role) stays until its last audit row expires; the nightly retention job then deletes it. The linked person and audit rows stay (actor shown as "removed user").
 - Escalated to PM: lawful basis (with D8).
 
 ## Rollout and rollback

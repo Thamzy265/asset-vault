@@ -2,6 +2,106 @@
 
 Newest entry first. Plans and designs live in their own files; this log records events.
 
+## 2026-11-21 — M1.2 Data model foundation — QA pass, merged to main
+
+- Changed: QA passed 7/7 criteria (all automated) on throwaway stack `qa-m12`: `pnpm check` 600 pass, e2e 38 pass, deps:audit clean; live repository script 33/33 (private records hidden, write rules hold); as `vault_app`, every audit-log tamper route refused; a failed audit insert leaves no person row; retention removed old rows and cleared old IP prefixes. Evidence: `docs/qa/M1.md` (M1.2 section), `docs/qa/M1/screens/2-*` (12 files). No video — no user-visible flow. Accessibility n/a (no UI change). Privacy pass.
+- Lead decisions on QA's questions: S1 — the AC means business tables; plan wording updated. S2 — `vault_app` owning the pg-boss job-queue schema is acceptable (no family data there); README wording fixed in M1.3. O1, O2 (README notes) and O3 (`vault_app` can delete users) carried into the M1.3 design note as (g) and (h).
+- Merged: `git merge --no-ff feat/m1-2-data-model` into `main` as eff07c6, under the PM's standing approval of 2026-11-21. Lead check on main: `pnpm check` 2/2 green (600 tests). Plan box M1.2 ticked.
+- Needs PM: the default `asset-vault` stack won't start until `.env` has `VAULT_MIGRATOR_PASSWORD` and `VAULT_APP_PASSWORD` and its database volume is recreated (no real data in it). The team won't delete the volume.
+- Gates: developer pass · tester pass · reviewer approve with notes · QA pass · merge done (standing approval; PM to review on return)
+- Open findings: C1, C3 (cleanup, waiting)
+- Blockers: Developer none · Tester none · Reviewer none · QA none · Marketer none · Lead: disk 97% full (PM's call)
+
+## 2026-11-21 — M1.2 Data model foundation — reviewer: approve with notes (final), to QA
+
+- Changed: reviewer confirmed N1 fixed with no new gap; every production path (web, worker, migrate service, CLI scripts, healthcheck) runs with NODE_ENV=production. `pnpm check` 600 pass.
+- Lead: the reviewer's optional fail-safe suggestion (global map only for development/test) goes into the M1.3 brief.
+- Gates: developer pass · tester pass · reviewer approve with notes · QA open · merge waiting (standing approval)
+- Open findings: C1, C3 (cleanup, waiting)
+- Blockers: Developer none · Tester none · Reviewer none · QA none · Marketer none · Lead: disk 97% full (PM's call)
+
+## 2026-11-21 — M1.2 Data model foundation — N1 fixed, to reviewer
+
+- Changed: 57796c9 — in production the client map is module-private (nothing on globalThis); the global cache is used only when NODE_ENV isn't "production". apps/** lint rejects symbol-listing calls. Both images run with NODE_ENV=production (confirmed on a running stack). `pnpm check` 2/2 green (600 tests); e2e 38 passed (stack removed).
+- Gates: developer pass · tester pass · reviewer N1 re-check open · QA open · merge waiting (standing approval)
+- Open findings: N1 (fixed, awaiting re-check); C1, C3 (cleanup)
+- Blockers: Developer none · Tester none · Reviewer none · QA none · Marketer none · Lead: disk 97% full (PM's call)
+
+## 2026-11-21 — M1.2 Data model foundation — reviewer re-check: approve with notes, N1 to developer
+
+- Changed: reviewer confirmed L1–L7 and C2 fixed; `pnpm check` 597 pass; deps:audit clean. C1, C3 waiting (cleanup, lead decision).
+- New: N1 (Low) — the L7 fix puts the database client map on `globalThis`; app code can find it by listing symbols and read people with no visibility check or audit row (deliberate bypass only).
+- Lead decision: fix N1 rather than record it as an accepted limit (accepting an unfixed finding is a PM risk decision). Direction: keep the client map module-private in production; use the `globalThis` cache only in development (`NODE_ENV !== "production"`), with a test that a production build exposes no such symbol.
+- Gates: developer open (N1) · tester pass · reviewer approve with notes (N1 re-check pending) · QA open · merge waiting (standing approval)
+- Open findings: N1 (Low); C1, C3 (cleanup)
+- Blockers: Developer none · Tester none · Reviewer none · QA none · Marketer none · Lead: disk 97% full (PM's call)
+
+## 2026-11-21 — M1.2 Data model foundation — review fixes done, to reviewer re-check
+
+- Changed: L1–L7 and C2 fixed in 8 commits on top of 6ac24fd, each with a regression test shown failing on the old code. Live rules moved to `packages/db/src/rules.ts`; merged migrations are frozen from now on. `pnpm check` 3/3 green (597 tests). `pnpm test:e2e` 38 passed on a throwaway stack (removed). `pnpm deps:audit` clean.
+- Developer notes: the pg-boss pool also got a 55 s statement timeout (N1 rule); the client map on `globalThis` could still be found by reflection (lint guardrail; roles are the backstop); dev-server reload tested with module reset, not a live `next dev`. The PM's local `.env` lacks the two new role passwords, so the default stack won't start until they're added (and the volume recreated).
+- Gates: developer pass · tester pass · reviewer re-check open · QA open · merge waiting (standing approval)
+- Open findings: C1, C3 (cleanup, waiting)
+- Blockers: Developer none · Tester none · Reviewer none · QA none · Marketer none · Lead: disk 97% full (PM's call)
+
+## 2026-11-21 — M1.2 Data model foundation — reviewer verdict: approve with notes
+
+- Changed: reviewer (Opus) reviewed 23 commits. `pnpm check` 556 pass; `pnpm deps:audit` clean. Authorisation, roles, SECURITY DEFINER retention, audit integrity, migration gate and timeouts confirmed. 7 Low (L1–L7), 3 cleanup (C1–C3).
+- Lead decisions:
+  - Fix before merge: L1 (validate `relationship`; raw DB errors could carry names into logs), L2 (no-op update must still log a view), L3 (pg-boss raw SQL can get round the visibility layer: allow the pg-boss import only in worker.ts and forbid `getDb`/`executeSql`), L4 (pg-boss pool gets a query timeout — no exemption from N1), L5 (non-admins may not set owner to null), L6 (move live rule constants out of migration files and freeze merged migrations), L7 (dev-server handle reload), C2 (validate the viewer once; audit fields come from the inserted columns).
+  - Can wait: C1 (retention touching `updated_at` on SET NULL — revisit when deactivation ships in M1.3), C3 (duplicate constant).
+  - Carried into the M1.3 design note: branded Viewer type, deactivated users rejected on every request, deactivation clears `person_id`, auth tables cascade so retention never fails, no Postgres detail in logs.
+  - Plan: Later trigger for the volume upgrade reworded to a number ("people rows > 0 on any volume created before migration 0004"); added a Later line for an audit_log(at) index.
+- Gates: developer open (review fixes) · tester pass · reviewer approve with notes (re-check pending) · QA open · merge waiting (standing approval)
+- Open findings: L1–L7, C2 being fixed; C1, C3 waiting
+- Blockers: Developer none · Tester none · Reviewer none · QA none · Marketer none · Lead: disk 97% full (PM's call)
+
+## 2026-11-21 — M1.2 Data model foundation — tester fixes done, to reviewer
+
+- Changed: 11 commits (5c6c1e8..6ac24fd). Separate database logins: `vault_migrator` (owns the schema, migrations only) and `vault_app` (web and worker; not superuser, owns nothing; audit log select + insert on app columns only). Retention function SECURITY DEFINER. Write rules, person-owns-own-record, Unicode name rules, input checks, ids lowercased, ip_prefix on 4 sign-in events, audit-log rollback refused while it has rows, users deactivated not deleted, migrations out of the app API, lint bypasses L1–L7 closed. `pnpm check` 5/5 green (556 tests), 0 expected-fail markers. `pnpm test:e2e` 38 passed on a throwaway stack (removed), including a check that web and worker connect as `vault_app` and can't disable the audit protections. `pnpm deps:audit` clean.
+- Developer notes: 0002 and 0003 were edited in place (unmerged, so acceptable); commit 7625e62 alone fails typecheck (fixed in fd52657); pg-boss keeps its own DB connection (limited by the roles); lint can't see tsconfig path aliases or symlinks (review and roles are the backstop).
+- **Needs PM after merge:** a database volume created before this change has no roles, so the PM's default `asset-vault` stack won't start until its volume is recreated (no real data in it yet). Deleting that volume is a PM decision; the team won't do it. Later line added for a scripted upgrade.
+- Gates: developer pass · tester pass (findings fixed) · reviewer open · QA open · merge waiting (standing approval)
+- Open findings: none open on the branch
+- Blockers: Developer none · Tester none · Reviewer none · QA none · Marketer none · Lead: disk 97% full (PM's call)
+
+## 2026-11-21 — M1.2 Data model foundation — tester report, back to developer
+
+- Changed: tester added 195 cases in 4 files (4 commits e38166b..bec5690): 443 pass, 12 expected-fail bug repros. Mutation tests on visibility, retention, IP prefix and name length all caught. `pnpm test:e2e` 37 pass. No production code changed.
+- Bugs: B3 (medium) a user with audit rows can't be deleted; B5 (low-medium, fails open) explicit empty visibility on create becomes `family`; B1 (low) Unicode-blank names accepted; B2 (low) non-string names coerced and stored; B4 (low) uppercase owner id causes a phantom update; L1–L7 (low-medium together) ways to get round the no-raw-DB lint rule; observation: apps can import `migrateUp`/`migrateDown`.
+- Spec questions Q1–Q7 decided by the lead (write rules, a person owns their own record, separate migrator/app DB roles, IP prefix events, rollback of the audit log refused when it has rows, name rules, trusted viewer) — see "Lead decisions after the tester round" in `docs/design/m1-2-data-model.md`. For PM review on return.
+- Q3 matters most: the app's database login today is a superuser and owns the tables, so it can switch off the audit-log protections. Classed as Medium security; fixed in this round (never deferred: authorisation and data integrity).
+- Escalation: the item failed a test round, so the developer is dispatched again one level higher (Opus, high effort).
+- Gates: developer open (fixes) · tester pass with findings · reviewer open · QA open · merge waiting (standing approval)
+- Open findings: 1 medium security (Q3 roles), 1 medium (B3), 1 low-medium (B5), lint bypasses, 3 low
+- Blockers: Developer none · Tester none · Reviewer none · QA none · Marketer none · Lead: disk 97% full (PM's call)
+
+## 2026-11-21 — M1.2 Data model foundation — developer hand-off, to tester
+
+- Changed: branch `feat/m1-2-data-model`, 8 commits (HEAD bb4272e). `pnpm check` 10 of 10 green (260 tests). `pnpm test:e2e` 37 passed on throwaway stack `vault-m12`, including both migration-gate scenarios. Health shows schema expected/applied; 503 after a one-step rollback, 200 after re-migrating. Stack, volume and images removed afterwards; no pruning; about 29 GB free on disk.
+- F-M1.1-1 flaky test: fixed (0cdd471) — 11/12 green before, 10/10 after.
+- Developer notes: starting web also runs the `migrate` dependency, so a rollback must deploy the previous image before starting web (README order). Commit 536285b alone fails `pnpm secrets` (fixed in e8f9a14).
+- Gates: developer pass · tester open · reviewer open · QA open · merge waiting (standing approval)
+- Open findings: none
+- Blockers: Developer none · Tester none · Reviewer none · QA none · Marketer none · Lead: disk 97% full (PM's call to clean)
+
+## 2026-11-21 — M1.2 Data model foundation — developer hand-off (partial), Docker stopped
+
+- Changed: branch `feat/m1-2-data-model`, 7 commits. Migrations 0002 (people, users) and 0003 (append-only audit log with retention function), shared record-columns helper, visibility layer (`access.ts`, `people.ts`) with same-transaction audit rows, opaque `DbHandle` plus an ESLint rule forbidding raw DB access in apps, nightly retention job, one-shot `migrate` service gating web and worker, health reports schema version (503 on mismatch), timeouts 4 s / 5 s (N1). Flaky test F-M1.1-1 found and fixed (0cdd471): the random AWS-secret fixture sometimes ended in `/` or `+`, which secretlint's word boundary misses (1 in 12 runs on main).
+- Not yet run on HEAD: full `pnpm check` × 10, e2e incl. the new migration-gate spec, image builds. Docker Desktop stopped at about 11:34 (no process left; data disk 97% used, 30 GB free). The lead restarted it once with `open -a Docker` (up after 10 s); developer resumed to finish verification. No images or caches pruned.
+- Developer questions for M1.3: which audit actions may carry `ip_prefix` (now sign_in and sign_in_failed only); how to remove a user who has audit rows (the actor FK can't be nulled under the append-only guard).
+- Gates: developer open (verification) · tester open · reviewer open · QA open · merge waiting (standing approval)
+- Open findings: none new
+- Blockers: Developer none (Docker back) · Tester none · Reviewer none · QA none · Marketer none · Lead: Mac data disk is 97% full (Docker images and build cache about 30 GB, 8.3 GB reclaimable) — cleaning it is the PM's call.
+
+## 2026-11-21 — M1.2 Data model foundation — developer briefed
+
+- Changed: developer briefed on `feat/m1-2-data-model` from main 37dcc5d. Size: large (data model, personal data, audit log). Started on Opus: changes the data model and touches personal data. Brief includes the migration gate (L7), the timeout rule (N1) and the flaky-test hunt (F-M1.1-1).
+- Gates: developer open · tester open · reviewer open · QA open · merge waiting (standing approval)
+- Open findings: F-M1.1-1 (Low, in this brief)
+- Decisions: none new. Lawful basis (with D8) and retention proposals still with PM.
+- Blockers: Developer none · Tester none · Reviewer none · QA none · Marketer none · Lead none
+
 ## 2026-11-21 — M1.1 Repo and stack skeleton — QA pass, merged to main
 
 - Changed: QA passed 2/2 plan criteria (13/13 rows, all automated) on a `--no-cache` build in a throwaway project: `pnpm check` 181 pass, `pnpm test:e2e` 35 pass, health 200 / 503 in 5.03 s with Postgres paused, migrations down/up/up, idle RAM ≈ 135 MiB, Postgres not reachable from the host, web on 127.0.0.1 only, read-only app files. Evidence: `docs/qa/M1.md#m11`, `docs/qa/M1/screens/` (7 files), video `qa-artifacts/m1/M1.1-home-then-health.webm` (not committed). Accessibility: pass, limited — no axe scan (axe not in the project). Privacy: pass — no personal data, no secrets in bodies or logs.

@@ -94,6 +94,29 @@ Not legal advice. Lawful basis is the PM's decision; D8 (household exemption) is
 - README rollback order: stop worker → roll back → deploy the previous image.
 - Timeouts (from M1.1 re-review, N1): on every connection, `statement_timeout` stays below the client `query_timeout` (e.g. 4 s / 5 s) so Postgres cancels first and frees the connection; test: a query longer than `statement_timeout`, then the next query on a 1-connection pool answers at once. The migration connection raises both limits together.
 
+
+## Lead decisions after the tester round (2026-11-21, PM reviews on return)
+
+The tester's questions Q1–Q7 showed the note was silent on several rules. Decided by the lead under the PM's standing approval; the PM may change them on return.
+
+1. **Who may write (Q1).** Seeing is not editing:
+   - Read: as before (`family` → every signed-in user; `private` → the owner's linked user and admins).
+   - Edit ordinary fields of a visible record: the owner's linked user, admins, and — for `family` records only — any signed-in member (shared family records).
+   - Change `owner_person_id` or `visibility`, or delete: **only the owner's linked user or an admin.** Anyone else gets not-found if the record is hidden, otherwise a `ForbiddenError` (the record is already visible, so this leaks nothing).
+   - Create: a member may create records owned by themselves only; admins may create for anyone.
+2. **A person owns their own record (Q2).** For a `people` row, the user linked to that person counts as its owner, so a member can't lock themselves out by making their own record private.
+3. **Database roles (Q3).** Two roles, created by the Postgres init and migrations:
+   - `vault_migrator`: owns the schema, runs migrations; used only by the `migrate` service.
+   - `vault_app`: used by web and worker; not a superuser, not a table owner. Business tables: SELECT, INSERT, UPDATE, DELETE. `audit_log`: SELECT and INSERT only, and INSERT only on the columns the app may set (not `id`, not `at`, so time can't be backdated).
+   - `audit_log_retention()` is `SECURITY DEFINER`, owned by `vault_migrator`, with a fixed `search_path`; `vault_app` may EXECUTE it and nothing else on the log.
+   - Accepted limit: whoever holds the app's credentials can still insert false audit rows; the protections are credentials only on the server and admin access only over Tailscale.
+4. **IP prefix (Q4).** Allowed on `sign_in`, `sign_in_failed`, `2fa_failed` and `backup_code_used` (as in the M1.3 note). M1.2 widens the check now so M1.3 needs no change.
+5. **Rolling back the audit log (Q5).** The `down` of 0003 refuses when `audit_log` has rows; the message says to export the log first. History is never dropped by a routine rollback.
+6. **Names (Q6).** The repository trims leading and trailing Unicode whitespace, then rejects a name that is empty, contains only whitespace or zero-width characters, contains control characters, bidi override or isolate characters (U+202A–U+202E, U+2066–U+2069) or lone surrogates. Length 1–100 counted in Unicode code points. The database check matches (Unicode-aware blank check).
+7. **Trusted viewer (Q7).** The repository trusts the `Viewer` it is given. M1.3 must build the viewer only from a verified session with 2FA passed; nothing else may construct one.
+8. **Removing a user (B3).** Users are deactivated, not deleted (see `docs/design/m1-3-sign-in.md`, Privacy). `audit_log.actor_user_id` is `ON DELETE RESTRICT` on purpose; the retention job deletes a deactivated user's row once its last audit row has expired.
+9. **Migrations are not part of the app API.** `migrateUp`/`migrateDown` move to a separate entry point used only by the migrate CLI; apps can't import it.
+
 ## Rollout and rollback
 Migrations run on deploy; rollback = `pnpm db:rollback` for this item's migrations (drops the three tables — no real data yet) and revert the merge.
 
