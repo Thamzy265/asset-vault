@@ -16,9 +16,29 @@ describe("GET /api/v1/health route module (tester)", () => {
     delete (globalThis as { vaultDb?: unknown }).vaultDb;
   });
 
-  it("exports only GET (+ route config), so Next answers any other method with 405", () => {
+  it("exports GET and explicit handlers for every other method Next routes (HEAD comes from GET)", () => {
     const exported = Object.keys(route).sort();
-    expect(exported).toEqual(["GET", "dynamic"]);
+    expect(exported).toEqual(["DELETE", "GET", "OPTIONS", "PATCH", "POST", "PUT", "dynamic"]);
+  });
+
+  // M1.1-T2: Next's automatic 405 has no Allow header (RFC 9110 requires one).
+  // M1.1-T3: the 405 body uses the same JSON error shape as the /api/v1 404.
+  it.each(["POST", "PUT", "PATCH", "DELETE"] as const)(
+    "%s answers 405 with Allow: GET, HEAD, OPTIONS and the JSON error shape",
+    async (method) => {
+      const res = route[method]();
+      expect(res.status).toBe(405);
+      expect(res.headers.get("allow")).toBe("GET, HEAD, OPTIONS");
+      expect(res.headers.get("content-type")).toContain("application/json");
+      expect(await res.json()).toEqual({ error: { code: "method_not_allowed", message: expect.any(String) } });
+    },
+  );
+
+  it("OPTIONS answers 204 with the same Allow header and no body", async () => {
+    const res = route.OPTIONS();
+    expect(res.status).toBe(204);
+    expect(res.headers.get("allow")).toBe("GET, HEAD, OPTIONS");
+    expect(await res.text()).toBe("");
   });
 
   it("is never statically cached", () => {

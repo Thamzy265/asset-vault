@@ -27,17 +27,26 @@ test.describe("health endpoint abuse and edge cases", () => {
     });
   }
 
-  // BUG M1.1-T2 (low): the 405 carries no Allow header (RFC 9110 requires one).
-  // test.fail keeps the suite green until the developer fixes it; remove it then.
-  test.fail("405 names the allowed methods in an Allow header", async ({ request }) => {
+  // Regression M1.1-T2: the 405 carried no Allow header (RFC 9110 requires one).
+  test("405 names the allowed methods in an Allow header", async ({ request }) => {
     const res = await request.fetch(PATH, { method: "POST" });
     expect(res.headers()["allow"]).toMatch(/GET/);
   });
 
+  for (const method of ["POST", "PUT", "PATCH", "DELETE"] as const) {
+    test(`${method} 405 has Allow: GET, HEAD, OPTIONS and the JSON error shape (M1.1-T2, T3)`, async ({ request }) => {
+      const res = await request.fetch(PATH, { method });
+      expect(res.status()).toBe(405);
+      expect(res.headers()["allow"]).toBe("GET, HEAD, OPTIONS");
+      expect(res.headers()["content-type"]).toContain("application/json");
+      expect(await res.json()).toEqual({ error: { code: "method_not_allowed", message: expect.any(String) } });
+    });
+  }
+
   test("OPTIONS and HEAD behave: OPTIONS lists GET, HEAD has no body but the same status", async ({ request }) => {
     const options = await request.fetch(PATH, { method: "OPTIONS" });
     expect(options.status()).toBe(204);
-    expect(options.headers()["allow"]).toContain("GET");
+    expect(options.headers()["allow"]).toBe("GET, HEAD, OPTIONS");
     const head = await request.fetch(PATH, { method: "HEAD" });
     expect(head.status()).toBe(200);
     expect(await head.text()).toBe("");
