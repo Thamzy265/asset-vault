@@ -20,6 +20,7 @@
     "user:deactivate": "docker compose run --rm --no-deps worker node packages/db/src/users-cli.ts deactivate"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
     "@eslint/js": "^10.0.1",
     "@next/eslint-plugin-next": "16.4.6",
     "@playwright/test": "1.64.0",

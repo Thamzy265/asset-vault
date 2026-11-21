@@ -160,4 +160,10 @@ export default tseslint.config(
     },
     settings: { next: { rootDir: "apps/web" } },
   },
+  {
+    // M1.3: the authenticator QR code is a generated data: SVG. next/image would add
+    // nothing (no optimisation for data URLs) and puts inline styles the CSP refuses.
+    files: ["apps/web/src/ui/enrol.tsx"],
+    rules: { "@next/next/no-img-element": "off" },
+  },
 );
