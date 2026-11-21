@@ -9,6 +9,8 @@ const PG_BOSS_MESSAGE =
   "Only apps/worker/src/worker.ts may import pg-boss: its getDb().executeSql() runs any SQL as the app role with no visibility check (review L3).";
 const PG_BOSS_SQL_MESSAGE =
   "No pg-boss getDb()/executeSql() in apps: they run raw SQL with no visibility check. Use @vault/db's functions and repositories (review L3).";
+const SYMBOL_FOR_MESSAGE =
+  "No Symbol.for in apps: registered symbols reach @vault/db's internal client map on globalThis (review L7).";
 const LOADER_MESSAGE =
   "Apps load modules with static imports or literal import() only (no require, createRequire or node:module), so the no-raw-database rule can see every module they use.";
 
@@ -67,6 +69,10 @@ function noRawDatabaseAccess({ testFiles, allowPgBoss = false }) {
       { selector: `MemberExpression[property.value=${RAW_SQL_MEMBERS}]`, message: PG_BOSS_SQL_MESSAGE },
       { selector: `ObjectPattern > Property[key.name=${RAW_SQL_MEMBERS}]`, message: PG_BOSS_SQL_MESSAGE },
       { selector: `ObjectPattern > Property[key.value=${RAW_SQL_MEMBERS}]`, message: PG_BOSS_SQL_MESSAGE },
+      // @vault/db keeps its handle -> client map on globalThis under Symbol.for (L7 of the review).
+      { selector: "MemberExpression[object.name='Symbol'][property.name='for']", message: SYMBOL_FOR_MESSAGE },
+      { selector: "MemberExpression[object.name='Symbol'][property.value='for']", message: SYMBOL_FOR_MESSAGE },
+      { selector: "VariableDeclarator[init.name='Symbol'] > ObjectPattern > Property[key.name='for']", message: SYMBOL_FOR_MESSAGE },
       { selector: "ImportExpression[source.value=/^(node:)?module$/]", message: LOADER_MESSAGE },
       // CommonJS loaders (L3).
       { selector: "CallExpression[callee.name='require']", message: LOADER_MESSAGE },

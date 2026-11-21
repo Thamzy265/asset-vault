@@ -11,7 +11,20 @@ import type { Database } from "./schema.ts";
  */
 export type DbHandle = { readonly kind: "vault-db" };
 
-const clients = new WeakMap<DbHandle, Kysely<Database>>();
+/**
+ * Handle -> client. Kept on globalThis under a registered symbol (review L7):
+ * `next dev` re-evaluates this module on reload, and the web app keeps its
+ * handle across reloads (apps/web/src/server/db.ts), so a module-local map
+ * would stop resolving it. Not enumerable; apps may not use Symbol.for (lint),
+ * and the database roles stay the backstop.
+ */
+const CLIENTS_KEY = Symbol.for("@vault/db/clients");
+type ClientMap = WeakMap<DbHandle, Kysely<Database>>;
+const store = globalThis as typeof globalThis & { [CLIENTS_KEY]?: ClientMap };
+if (!store[CLIENTS_KEY]) {
+  Object.defineProperty(store, CLIENTS_KEY, { value: new WeakMap(), enumerable: false, writable: false, configurable: false });
+}
+const clients: ClientMap = store[CLIENTS_KEY]!;
 
 /** A handle, or (inside packages/db and its tests) the client itself. */
 export type DbLike = DbHandle | Kysely<Database>;

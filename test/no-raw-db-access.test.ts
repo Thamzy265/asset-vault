@@ -203,6 +203,19 @@ describe("raw database access bypasses stay closed in apps/**", () => {
     }
   });
 
+  // Review L7: handle.ts keeps its client map on globalThis under a Symbol.for key, so it
+  // survives `next dev` reloads; apps may not look that key up.
+  it("Symbol.for is rejected in apps/** (it would reach @vault/db's client map on globalThis)", async () => {
+    for (const code of [
+      'const map = (globalThis as never)[Symbol.for("@vault/db/clients")];',
+      "const s = Symbol.for(key);",
+      'const s = Symbol["for"]("@vault/db/clients");',
+      "const { for: f } = Symbol;",
+    ]) {
+      for (const file of [SRC, "apps/worker/src/worker.ts", TEST]) expect(await restricted(code, file), `${file}: ${code}`).not.toEqual([]);
+    }
+  });
+
   it("the web app's own getDb() (an opaque handle) is still allowed as a plain call", async () => {
     expect(await restricted('import { getDb } from "../../../../server/db.ts";\nexport const h = () => getDb();', "apps/web/src/app/api/v1/health/route.ts")).toEqual([]);
   });
