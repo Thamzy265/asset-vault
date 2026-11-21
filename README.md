@@ -58,6 +58,7 @@ In this order, so no code runs against a schema it doesn't know:
 
 1. Stop the worker (and the web app): `docker compose stop worker web`
 2. Roll back the new release's migrations: `pnpm db:rollback`, once per migration the release added. A `down` can drop data the release added.
+   Rolling back `0003_audit_log` is refused while the audit log has rows: a routine rollback never drops audit history. Export the log first, for example `docker compose exec -T postgres pg_dump -U vault -d vault --data-only --table=audit_log > audit_log-export.sql`, and keep the file as safely as the database (it names who did what). Removing the log after that is a deliberate admin decision, not a migration.
 3. Deploy the previous image (check out the previous release, then `docker compose up -d --build --wait`). Its `migrate` service finds nothing to apply, and health shows `schema.applied` equal to `schema.expected`.
 
 ## Layout

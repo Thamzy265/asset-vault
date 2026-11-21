@@ -438,14 +438,35 @@ describe("ip_prefix", () => {
 });
 
 describe("migration 0003 rollback", () => {
-  it("rolling back 0003 removes the table and functions, rolling forward restores a working empty log, and people/users data survive", async () => {
+  // Decision 5: history is never dropped by a routine rollback.
+  it("rolling back 0003 is refused while audit_log has rows, with a message to export the log first; nothing is dropped", async () => {
+    const fresh = await freshDatabase();
+    const own = createDb(fresh.url);
+    try {
+      await migrateUp(own);
+      await own.insertInto("audit_log").values({ action: "sign_out" }).execute();
+      const error = (await migrateDown(own).catch((e: unknown) => e)) as Error & { code?: string };
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toMatch(/audit_log has rows/);
+      expect(error.message).toMatch(/export the audit log first/i);
+      expect(error.code).toBe("55000");
+      expect(await readSchemaVersion(own)).toBe("0003_audit_log");
+      expect(await own.selectFrom("audit_log").select("action").execute()).toEqual([{ action: "sign_out" }]);
+      const functions = await sql<{ proname: string }>`select proname from pg_proc where proname like 'audit_log%' order by 1`.execute(own);
+      expect(functions.rows.map((r) => r.proname)).toEqual(["audit_log_guard", "audit_log_retention"]);
+    } finally {
+      await own.destroy();
+      await fresh.drop();
+    }
+  });
+
+  it("rolling back 0003 with an empty log removes the table and functions, rolling forward restores a working empty log, and people/users data survive", async () => {
     const fresh = await freshDatabase();
     const own = createDb(fresh.url);
     try {
       await migrateUp(own);
       const person = await own.insertInto("people").values({ display_name: "Survivor" }).returning("id").executeTakeFirstOrThrow();
-      const user = await own.insertInto("users").values({ person_id: person.id, role: "admin" }).returning("id").executeTakeFirstOrThrow();
-      await own.insertInto("audit_log").values({ action: "view", entity_type: "person", entity_id: person.id, actor_user_id: user.id }).execute();
+      await own.insertInto("users").values({ person_id: person.id, role: "admin" }).returning("id").executeTakeFirstOrThrow();
 
       expect(await migrateDown(own)).toEqual(["0003_audit_log"]);
       expect(await readSchemaVersion(own)).toBe("0002_people_users");
@@ -455,7 +476,7 @@ describe("migration 0003 rollback", () => {
       expect(await own.selectFrom("users").select("role").execute()).toEqual([{ role: "admin" }]);
 
       await migrateUp(own);
-      expect(await own.selectFrom("audit_log").select("id").execute()).toEqual([]); // history is dropped by down: it is documented, see report Q5
+      expect(await own.selectFrom("audit_log").select("id").execute()).toEqual([]);
       await own.insertInto("audit_log").values({ action: "view", entity_type: "person", entity_id: person.id }).execute();
       await expect(own.updateTable("audit_log").set({ action: "create" }).execute()).rejects.toMatchObject({ code: "42501" });
       await expect(runAuditRetention(own)).resolves.toEqual({ deleted: 0, ipPrefixesCleared: 0 });

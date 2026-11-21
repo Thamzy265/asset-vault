@@ -107,7 +107,20 @@ export async function up(db: Kysely<unknown>): Promise<void> {
     end $$`.execute(db);
 }
 
+/**
+ * Refuses while audit_log has rows (decision 5): history is never dropped by a
+ * routine rollback. Export the log first; removing it is then a deliberate
+ * admin step, not a migration.
+ */
 export async function down(db: Kysely<unknown>): Promise<void> {
+  await sql`
+    do $$
+    begin
+      if exists (select 1 from audit_log) then
+        raise exception 'Rollback of 0003_audit_log refused: audit_log has rows. Export the audit log first (README, "Rolling back a release"); a routine rollback never drops audit history.'
+          using errcode = '55000';
+      end if;
+    end $$`.execute(db);
   await db.schema.dropTable("audit_log").execute();
   await sql`drop function audit_log_retention()`.execute(db);
   await sql`drop function audit_log_guard()`.execute(db);
