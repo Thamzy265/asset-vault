@@ -371,8 +371,9 @@ describe("ip_prefix", () => {
   const insert = (action: string, ip: string | null) =>
     db.insertInto("audit_log").values({ action: action as never, ip_prefix: ip, ...(["view", "create", "update", "delete"].includes(action) && { entity_type: "person", entity_id: randomUUID() }) }).execute();
 
-  it("is accepted only on sign_in and sign_in_failed: every other action is refused (23514), whatever the prefix", async () => {
-    for (const action of ["view", "create", "update", "delete", "sign_out", "2fa_enrolled", "2fa_failed", "password_changed", "backup_code_used"]) {
+  // Decision 4: allowed on the events that show where a sign-in attempt came from.
+  it("is accepted only on sign_in, sign_in_failed, 2fa_failed and backup_code_used: every other action is refused (23514), whatever the prefix", async () => {
+    for (const action of ["view", "create", "update", "delete", "sign_out", "2fa_enrolled", "password_changed"]) {
       await expect(insert(action, "192.0.2.0/24"), action).rejects.toMatchObject({ code: "23514" });
       await expect(insert(action, "2001:db8:abcd::/48"), action).rejects.toMatchObject({ code: "23514" });
     }
@@ -415,12 +416,19 @@ describe("ip_prefix", () => {
     await insert("sign_in", "192.0.2/24");
   });
 
-  it("accepts a correct /24 and /48 on both sign-in actions, in upper and lower case hex", async () => {
-    await insert("sign_in", "192.0.2.0/24");
-    await insert("sign_in_failed", "198.51.100.0/24");
-    await insert("sign_in", "2001:DB8:ABCD::/48");
-    await insert("sign_in_failed", "2001:db8:abcd::/48");
-    await insert("sign_in", null);
+  it("accepts a correct /24 and /48 on each of the four sign-in events, in upper and lower case hex", async () => {
+    for (const action of ["sign_in", "sign_in_failed", "2fa_failed", "backup_code_used"]) {
+      await insert(action, "192.0.2.0/24");
+      await insert(action, "2001:DB8:ABCD::/48");
+      await insert(action, "2001:db8:abcd::/48");
+      await insert(action, null);
+    }
+  });
+
+  it("the four sign-in events still refuse a full address or a wrong mask", async () => {
+    for (const action of ["2fa_failed", "backup_code_used"]) {
+      for (const ip of ["192.0.2.5", "192.0.2.0/23", "2001:db8::1/128"]) await expect(insert(action, ip), `${action} ${ip}`).rejects.toMatchObject({ code: "23514" });
+    }
   });
 
   it("an update from sign_in to a non-sign-in action cannot be used to keep an ip_prefix: UPDATE is refused outright", async () => {

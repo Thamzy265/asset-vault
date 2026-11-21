@@ -21,6 +21,9 @@ export const AUDIT_ACTIONS = [
   "backup_code_used",
 ] as const;
 
+/** The audit actions that may carry an ip_prefix (design note M1.2, decision 4). */
+export const IP_PREFIX_ACTIONS = ["sign_in", "sign_in_failed", "2fa_failed", "backup_code_used"] as const;
+
 const list = (values: readonly string[]) => sql.join(values.map((v) => sql.lit(v)));
 
 export async function up(db: Kysely<unknown>): Promise<void> {
@@ -39,11 +42,12 @@ export async function up(db: Kysely<unknown>): Promise<void> {
       "audit_log_record_action_has_entity",
       sql`action not in ('view', 'create', 'update', 'delete') or entity_id is not null`,
     )
-    // Minimisation: a /24 or /48 prefix, never a full address, and only on sign-in events.
+    // Minimisation: a /24 or /48 prefix, never a full address, and only on the events
+    // that show where a sign-in attempt came from (decision 4).
     .addCheckConstraint(
       "audit_log_ip_prefix",
       sql`ip_prefix is null or (
-        action in ('sign_in', 'sign_in_failed')
+        action in (${list(IP_PREFIX_ACTIONS)})
         and ip_prefix ~ '^[0-9a-fA-F:.]+/[0-9]{1,3}$'
         and ((family(ip_prefix::cidr) = 4 and masklen(ip_prefix::cidr) = 24)
           or (family(ip_prefix::cidr) = 6 and masklen(ip_prefix::cidr) = 48)))`,
