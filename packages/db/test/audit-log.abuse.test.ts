@@ -7,6 +7,7 @@ import { migrateDown, migrateUp } from "../src/migrate.ts";
 import { readSchemaVersion } from "../src/schema-version.ts";
 import { runAuditRetention } from "../src/index.ts";
 import type { Database } from "../src/schema.ts";
+import { migrateTo } from "./support/migrate.ts";
 import { freshDatabase } from "./support/fresh-database.ts";
 
 // Tester (M1.2): tampering with the audit log, retention boundaries, and what the
@@ -450,7 +451,7 @@ describe("migration 0003 rollback", () => {
     const fresh = await freshDatabase();
     const own = createDb(fresh.url);
     try {
-      await migrateUp(own);
+      await migrateTo(own, "0004_database_roles");
       await own.insertInto("audit_log").values({ action: "sign_out" }).execute();
       expect(await migrateDown(own)).toEqual(["0004_database_roles"]);
       const error = (await migrateDown(own).catch((e: unknown) => e)) as Error & { code?: string };
@@ -472,7 +473,7 @@ describe("migration 0003 rollback", () => {
     const fresh = await freshDatabase();
     const own = createDb(fresh.url);
     try {
-      await migrateUp(own);
+      await migrateTo(own, "0004_database_roles");
       const person = await own.insertInto("people").values({ display_name: "Survivor" }).returning("id").executeTakeFirstOrThrow();
       await own.insertInto("users").values({ person_id: person.id, role: "admin" }).returning("id").executeTakeFirstOrThrow();
 
@@ -499,7 +500,7 @@ describe("migration 0003 rollback", () => {
     const fresh = await freshDatabase();
     const own = createDb(fresh.url);
     try {
-      await migrateUp(own);
+      await migrateTo(own, "0004_database_roles");
       await migrateDown(own); // 0004
       await migrateDown(own); // 0003
       const raw = new pg.Client({ connectionString: fresh.url });

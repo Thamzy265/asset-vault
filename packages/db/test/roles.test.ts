@@ -9,6 +9,7 @@ import { migrations } from "../src/migrations/index.ts";
 import { peopleRepository } from "../src/people.ts";
 import type { Database } from "../src/schema.ts";
 import { readSchemaVersion } from "../src/schema-version.ts";
+import { migrateTo } from "./support/migrate.ts";
 import { freshDatabase, type FreshDatabase } from "./support/fresh-database.ts";
 
 // M1.2 decision 3: two database roles. vault_migrator owns the database and the schema and runs
@@ -206,7 +207,7 @@ describe("migration 0004 down and up", () => {
     const own = await freshDatabase();
     const m = createDb(own.url);
     try {
-      await migrateUp(m);
+      await migrateTo(m, "0004_database_roles");
       const granted = await appPrivileges(m);
       expect(await migrateDown(m)).toEqual(["0004_database_roles"]);
       expect(await appPrivileges(m)).toEqual({});
@@ -218,7 +219,7 @@ describe("migration 0004 down and up", () => {
       await app2.connect();
       await expect(app2.query("select 1 from people")).rejects.toMatchObject({ code: "42501" });
       await app2.end();
-      await migrateUp(m);
+      await migrateTo(m, "0004_database_roles");
       expect(await appPrivileges(m)).toEqual(granted);
     } finally {
       await m.destroy();

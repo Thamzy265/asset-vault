@@ -5,6 +5,7 @@ import { createDb } from "../src/client.ts";
 import { migrateDown, migrateUp } from "../src/migrate.ts";
 import { readSchemaVersion } from "../src/schema-version.ts";
 import type { Database } from "../src/schema.ts";
+import { migrateTo } from "./support/migrate.ts";
 import { freshDatabase } from "./support/fresh-database.ts";
 
 // Tester (M1.2 AC1 + AC3): bad inserts and bad updates fail at the database, however they arrive
@@ -132,7 +133,7 @@ describe("migration 0002 rollback and re-apply", () => {
     const fresh = await freshDatabase();
     const own = createDb(fresh.url);
     try {
-      await migrateUp(own);
+      await migrateTo(own, "0004_database_roles");
       await sql`insert into people (display_name) values ('Gone')`.execute(own);
       await migrateDown(own); // 0004
       await migrateDown(own); // 0003
@@ -156,7 +157,7 @@ describe("migration 0002 rollback and re-apply", () => {
     const fresh = await freshDatabase();
     const own = createDb(fresh.url);
     try {
-      await migrateUp(own);
+      await migrateTo(own, "0004_database_roles");
       const owner = (await sql<{ id: string }>`insert into people (display_name) values ('Owner') returning id`.execute(own)).rows[0]!.id;
       await sql`insert into people (display_name, owner_person_id) values ('Child', ${owner})`.execute(own);
       await sql`insert into users (person_id) values (${owner})`.execute(own);
