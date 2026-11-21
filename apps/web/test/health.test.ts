@@ -1,6 +1,7 @@
-import { closeDatabase, migrateDown, migrateUp, migrations, openDatabase, recordHeartbeat } from "@vault/db";
+import { closeDatabase, openDatabase, recordHeartbeat } from "@vault/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { freshDatabase } from "../../../packages/db/test/support/fresh-database.ts";
+import { migrateDown, migrateUp, migrations } from "../../../packages/db/test/support/migrate.ts";
 import { getHealth, healthResponse } from "../src/server/health.ts";
 import pkg from "../package.json" with { type: "json" };
 

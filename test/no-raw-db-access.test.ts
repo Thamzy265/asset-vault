@@ -1,3 +1,4 @@
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ESLint } from "eslint";
@@ -42,6 +43,18 @@ describe("no raw database access outside packages/db", () => {
   it("the public API exports no raw client factory or query builder", () => {
     for (const name of ["createDb", "createMigrationDb", "kyselyOf", "sql", "Kysely"]) {
       expect(Object.keys(publicApi), name).not.toContain(name);
+    }
+  });
+
+  it("migrations are not part of the app API: migrateUp/migrateDown live in an entry point only the migrate CLI imports (decision 9)", async () => {
+    for (const name of ["migrateUp", "migrateDown", "migrations"]) expect(Object.keys(publicApi), name).not.toContain(name);
+    const src = path.join(repo, "packages/db/src");
+    const importers = readdirSync(src, { recursive: true, encoding: "utf8" })
+      .filter((f) => f.endsWith(".ts") && /from\s+["'][./]+(?:[\w-]+\/)*migrate\.ts["']/.test(readFileSync(path.join(src, f), "utf8")))
+      .sort();
+    expect(importers).toEqual(["cli.ts"]);
+    for (const code of ['import { migrateUp } from "@vault/db/migrate";', 'import { migrateUp } from "../../../../packages/db/src/migrate.ts";']) {
+      expect(await restricted(code, "apps/web/src/server/x.ts"), code).not.toEqual([]);
     }
   });
 

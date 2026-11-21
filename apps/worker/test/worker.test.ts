@@ -1,6 +1,7 @@
-import { DatabaseUnavailableError, closeDatabase, migrateUp, openDatabase, readHeartbeat } from "@vault/db";
+import { DatabaseUnavailableError, closeDatabase, openDatabase, readHeartbeat } from "@vault/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { freshDatabase } from "../../../packages/db/test/support/fresh-database.ts";
+import { migrateUp } from "../../../packages/db/test/support/migrate.ts";
 import { rawQuery } from "../../../packages/db/test/support/raw-sql.ts";
 import { AUDIT_RETENTION_CRON, AUDIT_RETENTION_QUEUE } from "../src/audit-retention-job.ts";
 import { HEARTBEAT_QUEUE } from "../src/heartbeat-job.ts";

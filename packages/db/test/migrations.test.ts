@@ -2,7 +2,8 @@ import { sql, type Kysely } from "kysely";
 import { Migrator } from "kysely/migration";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb } from "../src/client.ts";
-import { migrateDown, migrateUp, migrations } from "../src/index.ts";
+import { migrateDown, migrateUp } from "../src/migrate.ts";
+import { migrations } from "../src/migrations/index.ts";
 import type { Database } from "../src/schema.ts";
 import { freshDatabase } from "./support/fresh-database.ts";
 

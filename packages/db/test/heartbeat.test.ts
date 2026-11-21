@@ -1,7 +1,8 @@
 import type { Kysely } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDb } from "../src/client.ts";
-import { migrateUp, pingDatabase, readHeartbeat, recordHeartbeat } from "../src/index.ts";
+import { pingDatabase, readHeartbeat, recordHeartbeat } from "../src/index.ts";
+import { migrateUp } from "../src/migrate.ts";
 import type { Database } from "../src/schema.ts";
 import { freshDatabase } from "./support/fresh-database.ts";
 

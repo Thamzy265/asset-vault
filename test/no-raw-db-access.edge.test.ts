@@ -99,9 +99,6 @@ describe("what @vault/db exports to apps (regression lock)", () => {
         "errorFields",
         "loadDbConfig",
         "log",
-        "migrateDown",
-        "migrateUp",
-        "migrations",
         "openDatabase",
         "peopleRepository",
         "pingDatabase",
@@ -133,7 +130,6 @@ describe("what @vault/db exports to apps (regression lock)", () => {
     await expect(publicApi.pingDatabase(forged)).rejects.toThrow(TypeError);
     await expect(publicApi.readSchemaVersion(forged)).rejects.toThrow(TypeError);
     await expect(publicApi.runAuditRetention(forged)).rejects.toThrow(TypeError);
-    await expect(publicApi.migrateUp(forged)).rejects.toThrow(TypeError);
     expect(() => publicApi.peopleRepository(forged)).toThrow(TypeError);
   });
 });
