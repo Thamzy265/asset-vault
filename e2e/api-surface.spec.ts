@@ -16,7 +16,7 @@ test.describe("health endpoint abuse and edge cases", () => {
     expect(res.headers()["x-powered-by"]).toBeUndefined();
     const text = await res.text();
     expectClean(text);
-    expect(Object.keys(JSON.parse(text)).sort()).toEqual(["db", "status", "version", "workerHeartbeat"]);
+    expect(Object.keys(JSON.parse(text)).sort()).toEqual(["db", "schema", "status", "version", "workerHeartbeat"]);
   });
 
   for (const method of ["POST", "PUT", "PATCH", "DELETE"] as const) {
