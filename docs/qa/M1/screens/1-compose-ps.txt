@@ -1,0 +1,5 @@
+$ docker compose -p qa-m11 ps   (throwaway project, port 3591)
+NAME                IMAGE                      COMMAND                  SERVICE    CREATED          STATUS                    PORTS
+qa-m11-postgres-1   postgres:18.7-alpine3.24   "docker-entrypoint.s…"   postgres   47 seconds ago   Up 46 seconds (healthy)   5432/tcp
+qa-m11-web-1        qa-m11-web                 "docker-entrypoint.s…"   web        47 seconds ago   Up 40 seconds (healthy)   127.0.0.1:3591->3000/tcp
+qa-m11-worker-1     qa-m11-worker              "docker-entrypoint.s…"   worker     47 seconds ago   Up 40 seconds (healthy)   
