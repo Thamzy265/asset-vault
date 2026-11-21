@@ -43,19 +43,22 @@ describe("no secrets in the repo (tester, abuse case: read secrets from the repo
     const vars = Object.fromEntries(lines.map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
     // Empty, so a copied .env.example can never start a stack with a published password
     // (Compose's ${...:?} refuses empty). Reviewer L4; decision 3 adds the two role passwords.
-    for (const name of ["POSTGRES_PASSWORD", "VAULT_MIGRATOR_PASSWORD", "VAULT_APP_PASSWORD"]) expect(vars[name], name).toBe("");
-    expect(Object.keys(vars).sort()).toEqual(["POSTGRES_DB", "POSTGRES_PASSWORD", "POSTGRES_USER", "VAULT_APP_PASSWORD", "VAULT_MIGRATOR_PASSWORD", "WEB_PORT"]);
+    // M1.3 adds the sign-in key (empty too) and the trusted IP header (empty: off).
+    for (const name of ["POSTGRES_PASSWORD", "VAULT_MIGRATOR_PASSWORD", "VAULT_APP_PASSWORD", "AUTH_ENCRYPTION_KEY", "AUTH_TRUSTED_IP_HEADER"]) expect(vars[name], name).toBe("");
+    expect(Object.keys(vars).sort()).toEqual([
+      "AUTH_ENCRYPTION_KEY", "AUTH_TRUSTED_IP_HEADER", "POSTGRES_DB", "POSTGRES_PASSWORD", "POSTGRES_USER", "VAULT_APP_PASSWORD", "VAULT_MIGRATOR_PASSWORD", "WEB_PORT",
+    ]);
     for (const [key, value] of Object.entries(vars)) {
       expect(value, key).not.toMatch(/:\/\/.*@/); // no URL with credentials
       expect(value, key).not.toMatch(/^[A-Za-z0-9+/_-]{24,}$/); // no long token-like value
     }
   });
 
-  it("the passwords in a local .env (if any) appear in no tracked file", async () => {
+  it("the passwords and the sign-in key in a local .env (if any) appear in no tracked file", async () => {
     const envPath = path.join(repo, ".env");
     if (!existsSync(envPath)) return;
     const text = readFileSync(envPath, "utf8");
-    for (const name of ["POSTGRES_PASSWORD", "VAULT_MIGRATOR_PASSWORD", "VAULT_APP_PASSWORD"]) {
+    for (const name of ["POSTGRES_PASSWORD", "VAULT_MIGRATOR_PASSWORD", "VAULT_APP_PASSWORD", "AUTH_ENCRYPTION_KEY"]) {
       const password = new RegExp(`^${name}=(.+)$`, "m").exec(text)?.[1]?.trim();
       if (!password || password === "change-me" || password.length < 8) continue;
       const result = await sh("git", ["grep", "-F", "-l", "--", password]);

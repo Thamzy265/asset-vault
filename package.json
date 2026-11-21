@@ -15,7 +15,9 @@
     "test:e2e": "playwright test",
     "deps:audit": "pnpm audit --prod --audit-level=moderate",
     "db:migrate": "docker compose run --rm --no-deps migrate",
-    "db:rollback": "docker compose run --rm --no-deps migrate node packages/db/src/cli.ts down"
+    "db:rollback": "docker compose run --rm --no-deps migrate node packages/db/src/cli.ts down",
+    "user:create": "docker compose run --rm --no-deps worker node packages/db/src/users-cli.ts create",
+    "user:deactivate": "docker compose run --rm --no-deps worker node packages/db/src/users-cli.ts deactivate"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -27,3 +27,10 @@ describe("migration scripts use the one-shot migrate service (review L7)", () =>
     expect(scripts["db:rollback"]).toBe("docker compose run --rm --no-deps migrate node packages/db/src/cli.ts down");
   });
 });
+
+describe("user commands run in the worker image as vault_app (M1.3)", () => {
+  it("user:create and user:deactivate call the users CLI through the worker service, without starting the stack", () => {
+    expect(scripts["user:create"]).toBe("docker compose run --rm --no-deps worker node packages/db/src/users-cli.ts create");
+    expect(scripts["user:deactivate"]).toBe("docker compose run --rm --no-deps worker node packages/db/src/users-cli.ts deactivate");
+  });
+});
