@@ -51,6 +51,8 @@ async function appPrivileges(db: Kysely<Database>): Promise<Record<string, strin
 }
 
 const SIUD = ["DELETE", "INSERT", "SELECT", "UPDATE"];
+/** M1.3 item (g): users are deactivated, not deleted (decision 8); only retention deletes them. */
+const SIU = ["INSERT", "SELECT", "UPDATE"];
 const AUDIT_INSERT_COLUMNS = ["action", "actor_user_id", "details", "entity_id", "entity_type", "ip_prefix"];
 
 describe("the roles (init script)", () => {
@@ -125,7 +127,7 @@ describe("what vault_app may do (migration 0004)", () => {
       audit_log: [...AUDIT_INSERT_COLUMNS.map((c) => `INSERT(${c})`), "SELECT"],
       kysely_migration: ["SELECT"],
       people: SIUD,
-      users: SIUD,
+      users: SIU,
     });
   });
 
@@ -198,6 +200,31 @@ describe("what vault_app may do (migration 0004)", () => {
     } finally {
       await fresh2.destroy();
       await sql.raw(`alter role vault_app in database ${dbName} reset search_path`).execute(admin);
+    }
+  });
+});
+
+describe("users are deactivated, not deleted (M1.3 item g, decision 8)", () => {
+  it("vault_app can't DELETE a user row, but retention (SECURITY DEFINER) still removes an expired deactivated user", async () => {
+    const leaver = await migrator.insertInto("users").values({ role: "member", deactivated_at: new Date() }).returning("id").executeTakeFirstOrThrow();
+    await expect(app.deleteFrom("users").where("id", "=", leaver.id).execute()).rejects.toMatchObject({ code: "42501" });
+    await runAuditRetention(app);
+    expect(await migrator.selectFrom("users").select("id").where("id", "=", leaver.id).executeTakeFirst()).toBeUndefined();
+  });
+
+  it("rolling back 0006 gives DELETE back; up takes it away again", async () => {
+    const own = await freshDatabase();
+    const m = createDb(own.url);
+    try {
+      await migrateTo(m, "0006_users_no_app_delete");
+      expect((await appPrivileges(m)).users).toEqual(SIU);
+      expect(await migrateDown(m)).toEqual(["0006_users_no_app_delete"]);
+      expect((await appPrivileges(m)).users).toEqual(SIUD);
+      await migrateTo(m, "0006_users_no_app_delete");
+      expect((await appPrivileges(m)).users).toEqual(SIU);
+    } finally {
+      await m.destroy();
+      await own.drop();
     }
   });
 });
