@@ -1,0 +1,3 @@
+$ docker compose -p qa-m12 logs --no-color   (whole run: 289 lines, includes my manual psql failures)
+web / worker / migrate service lines containing a synthetic name ("QA ..."), the password values or "postgres://": 0
+postgres service lines containing a synthetic name: 14, all from my own manual psql statements that failed on purpose (Postgres logs DETAIL "Failing row contains (...)" and the STATEMENT). Those are not app logs; see QA record note.

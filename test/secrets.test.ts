@@ -42,24 +42,26 @@ describe("no secrets in the repo (tester, abuse case: read secrets from the repo
       .filter((l) => l.trim() !== "" && !l.startsWith("#"));
     const vars = Object.fromEntries(lines.map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
     // Empty, so a copied .env.example can never start a stack with a published password
-    // (Compose's ${POSTGRES_PASSWORD:?} refuses empty). Reviewer L4.
-    expect(vars.POSTGRES_PASSWORD).toBe("");
-    expect(Object.keys(vars).sort()).toEqual(["POSTGRES_DB", "POSTGRES_PASSWORD", "POSTGRES_USER", "WEB_PORT"]);
+    // (Compose's ${...:?} refuses empty). Reviewer L4; decision 3 adds the two role passwords.
+    for (const name of ["POSTGRES_PASSWORD", "VAULT_MIGRATOR_PASSWORD", "VAULT_APP_PASSWORD"]) expect(vars[name], name).toBe("");
+    expect(Object.keys(vars).sort()).toEqual(["POSTGRES_DB", "POSTGRES_PASSWORD", "POSTGRES_USER", "VAULT_APP_PASSWORD", "VAULT_MIGRATOR_PASSWORD", "WEB_PORT"]);
     for (const [key, value] of Object.entries(vars)) {
       expect(value, key).not.toMatch(/:\/\/.*@/); // no URL with credentials
       expect(value, key).not.toMatch(/^[A-Za-z0-9+/_-]{24,}$/); // no long token-like value
     }
   });
 
-  it("the password in a local .env (if any) appears in no tracked file", async () => {
+  it("the passwords in a local .env (if any) appear in no tracked file", async () => {
     const envPath = path.join(repo, ".env");
     if (!existsSync(envPath)) return;
-    const match = /^POSTGRES_PASSWORD=(.+)$/m.exec(readFileSync(envPath, "utf8"));
-    const password = match?.[1]?.trim();
-    if (!password || password === "change-me" || password.length < 8) return;
-    const result = await sh("git", ["grep", "-F", "-l", "--", password]);
-    expect(result.code).toBe(1); // 1 = no match
-    expect(result.stdout).toBe("");
+    const text = readFileSync(envPath, "utf8");
+    for (const name of ["POSTGRES_PASSWORD", "VAULT_MIGRATOR_PASSWORD", "VAULT_APP_PASSWORD"]) {
+      const password = new RegExp(`^${name}=(.+)$`, "m").exec(text)?.[1]?.trim();
+      if (!password || password === "change-me" || password.length < 8) continue;
+      const result = await sh("git", ["grep", "-F", "-l", "--", password]);
+      expect(result.code, name).toBe(1); // 1 = no match
+      expect(result.stdout).toBe("");
+    }
   });
 
   describe("secretlint catches a planted fake secret (temporary file, removed afterwards)", () => {
@@ -70,7 +72,9 @@ describe("no secrets in the repo (tester, abuse case: read secrets from the repo
     // Built at run time so this test file itself never contains a secret-shaped string.
     // (secretlint deliberately ignores the documented AWS "EXAMPLE" keys, so use random ones.)
     const awsKeyId = "AKIA" + "ZNWQ7P3KDLMT5XRJ";
-    const awsSecret = randomBytes(30).toString("base64").slice(0, 40);
+    // Hex, not base64 (F-M1.1-1): secretlint's AWS secret pattern ends in `\b`, so a
+    // random base64 secret ending in "/" or "+" (about 1 run in 32) was not flagged.
+    const awsSecret = randomBytes(20).toString("hex");
     const ghToken = "ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8";
 
     it("flags an AWS key pair", async () => {

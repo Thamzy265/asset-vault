@@ -1,0 +1,85 @@
+$ psql as bootstrap superuser (admin view of roles and ownership)
+    rolname     | rolsuper | rolcreaterole | rolcreatedb | rolbypassrls | rolcanlogin 
+----------------+----------+---------------+-------------+--------------+-------------
+ vault          | t        | t             | t           | t            | t
+ vault_app      | f        | f             | f           | f            | t
+ vault_migrator | f        | f             | f           | f            | t
+(3 rows)
+
+ schema |        object         |     owner      | relkind 
+--------+-----------------------+----------------+---------
+ pgboss | bam                   | vault_app      | r
+ pgboss | instance              | vault_app      | r
+ pgboss | job_common            | vault_app      | r
+ pgboss | job_dependency        | vault_app      | r
+ pgboss | queue                 | vault_app      | r
+ pgboss | queue_stats_20261121  | vault_app      | r
+ pgboss | queue_stats_20261122  | vault_app      | r
+ pgboss | schedule              | vault_app      | r
+ pgboss | subscription          | vault_app      | r
+ pgboss | version               | vault_app      | r
+ pgboss | warning               | vault_app      | r
+ public | _meta                 | vault_migrator | r
+ public | audit_log             | vault_migrator | r
+ public | audit_log_id_seq      | vault_migrator | S
+ public | kysely_migration      | vault_migrator | r
+ public | kysely_migration_lock | vault_migrator | r
+ public | people                | vault_migrator | r
+ public | users                 | vault_migrator | r
+(18 rows)
+
+ objects_owned_by_vault_app 
+----------------------------
+                         67
+(1 row)
+
+ schema |       owner       
+--------+-------------------
+ public | pg_database_owner
+(1 row)
+
+       proname       | prosecdef |     owner      |              proconfig              
+---------------------+-----------+----------------+-------------------------------------
+ audit_log_retention | t         | vault_migrator | {"search_path=pg_catalog, pg_temp"}
+(1 row)
+
+  grantee  |    table_name    | privilege_type 
+-----------+------------------+----------------
+ vault_app | _meta            | DELETE
+ vault_app | _meta            | INSERT
+ vault_app | _meta            | SELECT
+ vault_app | _meta            | UPDATE
+ vault_app | audit_log        | SELECT
+ vault_app | kysely_migration | SELECT
+ vault_app | people           | DELETE
+ vault_app | people           | INSERT
+ vault_app | people           | SELECT
+ vault_app | people           | UPDATE
+ vault_app | users            | DELETE
+ vault_app | users            | INSERT
+ vault_app | users            | SELECT
+ vault_app | users            | UPDATE
+(14 rows)
+
+  grantee  |  column_name  | privilege_type 
+-----------+---------------+----------------
+ vault_app | action        | INSERT
+ vault_app | actor_user_id | INSERT
+ vault_app | details       | INSERT
+ vault_app | entity_id     | INSERT
+ vault_app | entity_type   | INSERT
+ vault_app | ip_prefix     | INSERT
+(6 rows)
+
+
+$ client connections seen by pg_stat_activity (not the bootstrap user)
+vault_app
+--- vault_app: schema creation and pgboss scope
+ERROR:  permission denied for database vault
+CREATE TABLE
+DROP TABLE
+ can_create_schema_in_db | can_create_in_public 
+-------------------------+----------------------
+ f                       | f
+(1 row)
+

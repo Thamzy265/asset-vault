@@ -1,35 +1,8 @@
-import { createServer, Socket, type AddressInfo, type Server } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createDb, pingDatabase } from "../src/client.ts";
+import { sql } from "kysely";
+import { createDb, createMigrationDb, MIGRATION_TIMEOUTS, pingDatabase, POOL_TIMEOUTS } from "../src/client.ts";
 import { freshDatabase } from "./support/fresh-database.ts";
-
-/**
- * A TCP proxy to the test Postgres that can go silent: after `freeze()` it keeps
- * every connection open but forwards nothing, like `docker pause postgres` or a
- * dropped network path. Reviewer finding L2.
- */
-function silentProxy(target: { host: string; port: number }) {
-  let frozen = false;
-  const sockets = new Set<Socket>();
-  const server: Server = createServer((client) => {
-    const upstream = new Socket();
-    upstream.connect(target.port, target.host);
-    for (const s of [client, upstream]) {
-      sockets.add(s);
-      s.on("error", () => {});
-    }
-    client.on("data", (d) => void (frozen || upstream.write(d)));
-    upstream.on("data", (d) => void (frozen || client.write(d)));
-  });
-  return {
-    listen: () => new Promise<number>((resolve) => server.listen(0, "127.0.0.1", () => resolve((server.address() as AddressInfo).port))),
-    freeze: () => (frozen = true),
-    close: () => {
-      for (const s of sockets) s.destroy();
-      return new Promise<void>((resolve) => server.close(() => resolve()));
-    },
-  };
-}
+import { silentProxy } from "./support/silent-proxy.ts";
 
 describe("pingDatabase when Postgres stops answering on an open connection (reviewer L2)", () => {
   let drop: () => Promise<void>;
@@ -67,4 +40,53 @@ describe("pingDatabase when Postgres stops answering on an open connection (revi
       void db.destroy().catch(() => {});
     }
   }, 15_000);
+});
+
+describe("timeouts: Postgres cancels a slow statement before the client gives up (review N1)", () => {
+  let url: string;
+  let drop: () => Promise<void>;
+
+  beforeAll(async () => {
+    ({ url, drop } = await freshDatabase());
+  });
+  afterAll(async () => drop?.());
+
+  it("keeps statement_timeout (4 s) below the client query_timeout (5 s)", () => {
+    expect(POOL_TIMEOUTS).toEqual({ statementMs: 4_000, queryMs: 5_000 });
+  });
+
+  it("a query longer than statement_timeout is cancelled by Postgres, and the next query on a 1-connection pool answers at once", async () => {
+    const db = createDb(url, { maxConnections: 1 });
+    try {
+      expect((await sql<{ statement_timeout: string }>`show statement_timeout`.execute(db)).rows[0]?.statement_timeout).toBe("4s");
+
+      const started = Date.now();
+      const slow = await sql`select pg_sleep(8)`.execute(db).then(
+        () => ({ code: "resolved" }),
+        (error: { code?: string }) => ({ code: error.code }),
+      );
+      expect(slow.code).toBe("57014"); // query_canceled: Postgres stopped it, so the connection is free
+      expect(Date.now() - started).toBeLessThan(4_900);
+
+      const next = Date.now();
+      await sql`select 1`.execute(db);
+      expect(Date.now() - next).toBeLessThan(1_000);
+    } finally {
+      await db.destroy();
+    }
+  }, 20_000);
+
+  it("the migration connection allows 5 min statements, waits at most 10 s for a lock, and its client timeout is above both", async () => {
+    expect(MIGRATION_TIMEOUTS.statementMs).toBe(300_000);
+    expect(MIGRATION_TIMEOUTS.lockMs).toBe(10_000);
+    expect(MIGRATION_TIMEOUTS.queryMs).toBeGreaterThan(MIGRATION_TIMEOUTS.statementMs);
+    const db = createMigrationDb(url);
+    try {
+      const { rows } = await sql<{ s: string; l: string }>`
+        select current_setting('statement_timeout') as s, current_setting('lock_timeout') as l`.execute(db);
+      expect(rows[0]).toEqual({ s: "5min", l: "10s" });
+    } finally {
+      await db.destroy();
+    }
+  });
 });

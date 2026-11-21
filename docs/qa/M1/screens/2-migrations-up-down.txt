@@ -1,0 +1,24 @@
+=== Criterion 1: migrations up and down cleanly, on an empty scratch database (qa_mig) in the throwaway Postgres ===
+CREATE DATABASE
+> up
+{"time":"2026-11-21T13:28:02.299Z","level":"info","msg":"migrations applied","migrations":["0001_meta","0002_people_users","0003_audit_log","0004_database_roles"]}
+> tables:
+_meta, audit_log, kysely_migration, kysely_migration_lock, people, users
+> down
+{"time":"2026-11-21T13:28:02.880Z","level":"info","msg":"migration reverted","migrations":["0004_database_roles"]}
+> down
+{"time":"2026-11-21T13:28:03.370Z","level":"info","msg":"migration reverted","migrations":["0003_audit_log"]}
+> down
+{"time":"2026-11-21T13:28:03.881Z","level":"info","msg":"migration reverted","migrations":["0002_people_users"]}
+> down
+{"time":"2026-11-21T13:28:04.379Z","level":"info","msg":"migration reverted","migrations":["0001_meta"]}
+> tables after 4 downs (only kysely bookkeeping tables expected):
+public.kysely_migration
+public.kysely_migration_lock
+functions=0
+types=0
+> up again
+{"time":"2026-11-21T13:28:04.980Z","level":"info","msg":"migrations applied","migrations":["0001_meta","0002_people_users","0003_audit_log","0004_database_roles"]}
+> up (no-op)
+{"time":"2026-11-21T13:28:05.475Z","level":"info","msg":"migrations applied","migrations":[]}
+DROP DATABASE

@@ -17,3 +17,13 @@ describe("package.json scripts", () => {
     expect(scripts.check).not.toMatch(/audit/);
   });
 });
+
+describe("migration scripts use the one-shot migrate service (review L7)", () => {
+  it("db:migrate runs the migrate service (its default command applies pending migrations)", () => {
+    expect(scripts["db:migrate"]).toBe("docker compose run --rm --no-deps migrate");
+  });
+
+  it("db:rollback reverts the latest migration through the migrate service", () => {
+    expect(scripts["db:rollback"]).toBe("docker compose run --rm --no-deps migrate node packages/db/src/cli.ts down");
+  });
+});

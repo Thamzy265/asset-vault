@@ -1,7 +1,13 @@
 import { sql, type Kysely } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createDb, migrateDown, migrateUp, migrations, readHeartbeat, recordHeartbeat, type Database } from "../src/index.ts";
+import { createDb } from "../src/client.ts";
+import { readHeartbeat, recordHeartbeat } from "../src/index.ts";
+import { migrateDown, migrateUp } from "../src/migrate.ts";
+import { migrations } from "../src/migrations/index.ts";
+import type { Database } from "../src/schema.ts";
 import { freshDatabase } from "./support/fresh-database.ts";
+
+const ALL_TABLES = ["_meta", "audit_log", "people", "users"];
 
 const all = Object.keys(migrations);
 
@@ -64,7 +70,7 @@ describe("migration edge cases (tester)", () => {
       for (let j = 0; j < all.length; j++) await migrateDown(db);
       expect(await tables(db)).toEqual([]);
       await migrateUp(db);
-      expect(await tables(db)).toEqual(["_meta"]);
+      expect(await tables(db)).toEqual(ALL_TABLES);
     }
   });
 
@@ -75,7 +81,7 @@ describe("migration edge cases (tester)", () => {
     try {
       const [ra, rb] = await Promise.all([migrateUp(a), migrateUp(b)]);
       expect([...ra, ...rb].sort()).toEqual([...all].sort());
-      expect(await tables(a)).toEqual(["_meta"]);
+      expect(await tables(a)).toEqual(ALL_TABLES);
     } finally {
       await a.destroy();
       await b.destroy();

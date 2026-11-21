@@ -1,0 +1,100 @@
+$ psql -h postgres -U vault_app -d vault   (login as the app role; scratch password not shown)
+--- wrong password is refused:
+psql: error: connection to server at "postgres" (172.21.0.2), port 5432 failed: FATAL:  password authentication failed for user "vault_app"
+--- identity (current_user | superuser?)
+vault_app|f
+--- allowed: INSERT an audit row without id/at
+INSERT 0 1
+=== Criterion 4: audit_log protections, as vault_app ===
+> update audit_log set action='delete' where id=1
+ERROR:  permission denied for table audit_log
+> delete from audit_log where id=1
+ERROR:  permission denied for table audit_log
+> truncate audit_log
+ERROR:  permission denied for table audit_log
+> insert into audit_log (at, action) values ('2001-01-01','view')
+ERROR:  permission denied for table audit_log
+> insert into audit_log (id, action) values (999,'view')
+ERROR:  cannot insert a non-DEFAULT value into column "id"
+DETAIL:  Column "id" is an identity column defined as GENERATED ALWAYS.
+HINT:  Use OVERRIDING SYSTEM VALUE to override.
+> alter table audit_log disable trigger all
+ERROR:  must be owner of table audit_log
+> alter table audit_log disable trigger user
+ERROR:  must be owner of table audit_log
+> alter table audit_log disable trigger audit_log_append_only
+ERROR:  must be owner of table audit_log
+> alter table audit_log disable trigger audit_log_no_truncate
+ERROR:  must be owner of table audit_log
+> set session_replication_role = replica
+ERROR:  permission denied to set parameter "session_replication_role"
+> drop trigger audit_log_append_only on audit_log
+ERROR:  must be owner of relation audit_log
+> alter table audit_log owner to vault_app
+ERROR:  must be owner of table audit_log
+> drop table audit_log
+ERROR:  must be owner of table audit_log
+> create or replace function audit_log_retention() returns record language sql as 'select 1'
+ERROR:  permission denied for schema public
+> create table public.evil (x int)
+ERROR:  permission denied for schema public
+> grant update on audit_log to vault_app
+WARNING:  no privileges were granted for "audit_log"
+GRANT
+> create role evil
+ERROR:  permission denied to create role
+DETAIL:  Only roles with the CREATEROLE attribute may create roles.
+--- audit rows still intact:
+2
+--- allowed: retention function (nothing expired yet):
+0|0|0
+
+=== Criterion 3: bad inserts / deletes fail at the database, as vault_app ===
+> insert into people (display_name, visibility) values ('QA Bad','secret')
+ERROR:  new row for relation "people" violates check constraint "people_visibility_check"
+DETAIL:  Failing row contains (a3e0f9f8-3825-4ce4-936c-713ca90f03dd, null, secret, 2026-11-21 13:24:36.964254+00, 2026-11-21 13:24:36.964254+00, null, null, QA Bad, null).
+> insert into people (display_name) values ('')
+ERROR:  new row for relation "people" violates check constraint "people_display_name_check"
+DETAIL:  Failing row contains (fb71945a-e333-4c5e-9a47-258e5fc0efa8, null, family, 2026-11-21 13:24:37.046381+00, 2026-11-21 13:24:37.046381+00, null, null, , null).
+> insert into people (display_name) values (repeat('x',101))
+ERROR:  new row for relation "people" violates check constraint "people_display_name_check"
+DETAIL:  Failing row contains (18a83d40-6f2d-4d06-93fd-17c824c0d414, null, family, 2026-11-21 13:24:37.12734+00, 2026-11-21 13:24:37.12734+00, null, null, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..., null).
+> insert into people (display_name) values (U&'\200B\200B')
+ERROR:  new row for relation "people" violates check constraint "people_display_name_check"
+DETAIL:  Failing row contains (a6826bad-4f73-46d5-8a8a-184bafee2a2c, null, family, 2026-11-21 13:24:37.211346+00, 2026-11-21 13:24:37.211346+00, null, null, ​​, null).
+> insert into people (display_name) values (null)
+ERROR:  null value in column "display_name" of relation "people" violates not-null constraint
+DETAIL:  Failing row contains (264d0b9c-6d28-4ef2-810b-d225cd866315, null, family, 2026-11-21 13:24:37.296149+00, 2026-11-21 13:24:37.296149+00, null, null, null, null).
+> insert into people (display_name, owner_person_id) values ('QA Orphan','00000000-0000-4000-8000-00000000dead')
+ERROR:  insert or update on table "people" violates foreign key constraint "people_owner_person_id_fkey"
+DETAIL:  Key (owner_person_id)=(00000000-0000-4000-8000-00000000dead) is not present in table "people".
+> insert into people (display_name, created_by_user_id) values ('QA Orphan2','00000000-0000-4000-8000-00000000dead')
+ERROR:  insert or update on table "people" violates foreign key constraint "people_created_by_user_id_fkey"
+DETAIL:  Key (created_by_user_id)=(00000000-0000-4000-8000-00000000dead) is not present in table "users".
+> insert into people (display_name, visibility, owner_person_id) values ('QA NoOwner','private',null)
+INSERT 0 1
+> insert into users (person_id, role) values ('00000000-0000-4000-8000-0000000000a1','member')
+ERROR:  duplicate key value violates unique constraint "users_person_id_key"
+DETAIL:  Key (person_id)=(00000000-0000-4000-8000-0000000000a1) already exists.
+> insert into users (person_id, role) values (null,'superadmin')
+ERROR:  new row for relation "users" violates check constraint "users_role_check"
+DETAIL:  Failing row contains (5de0944a-8795-49d4-87b9-cfe14c1897e8, null, superadmin, 2026-11-21 13:24:37.709352+00, 2026-11-21 13:24:37.709352+00, null).
+> insert into audit_log (action) values ('hack')
+ERROR:  new row for relation "audit_log" violates check constraint "audit_log_action_check"
+DETAIL:  Failing row contains (4, 2026-11-21 13:24:37.791137+00, null, hack, null, null, null, null).
+> insert into audit_log (action, ip_prefix) values ('view','10.1.2')
+ERROR:  new row for relation "audit_log" violates check constraint "audit_log_ip_prefix"
+DETAIL:  Failing row contains (5, 2026-11-21 13:24:37.873221+00, null, view, null, null, 10.1.2, null).
+> insert into audit_log (action, ip_prefix) values ('sign_in','10.1.2.3')
+ERROR:  new row for relation "audit_log" violates check constraint "audit_log_ip_prefix"
+DETAIL:  Failing row contains (6, 2026-11-21 13:24:37.957361+00, null, sign_in, null, null, 10.1.2.3, null).
+> insert into audit_log (action, details) values ('view','"a string"'::jsonb)
+ERROR:  new row for relation "audit_log" violates check constraint "audit_log_details_field_names_only"
+DETAIL:  Failing row contains (7, 2026-11-21 13:24:38.038464+00, null, view, null, null, null, "a string").
+> delete from people where id='00000000-0000-4000-8000-0000000000a1'
+ERROR:  update or delete on table "people" violates RESTRICT setting of foreign key constraint "users_person_id_fkey" on table "users"
+DETAIL:  Key (id)=(00000000-0000-4000-8000-0000000000a1) is referenced from table "users".
+> delete from users where id='00000000-0000-4000-8000-00000000aa01'
+DELETE 1
+--- counts after the attempts (people, users, audit_log):
+4|2|2

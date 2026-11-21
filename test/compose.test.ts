@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { copyFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,7 +29,14 @@ type Service = {
   init?: boolean;
   security_opt?: string[];
   cap_drop?: string[];
+  command?: string[];
+  build?: { dockerfile?: string };
 };
+
+// All three passwords (decision 3: the bootstrap superuser, vault_migrator, vault_app).
+const PW = { POSTGRES_PASSWORD: "pw12345", VAULT_MIGRATOR_PASSWORD: "mig12345", VAULT_APP_PASSWORD: "app12345" };
+const PASSWORD_VARS = Object.keys(PW) as Array<keyof typeof PW>;
+const without = (name: keyof typeof PW) => Object.fromEntries(Object.entries(PW).filter(([k]) => k !== name));
 
 async function config(env: Record<string, string>): Promise<{ services: Record<string, Service> }> {
   const { stdout } = await run(
@@ -42,52 +49,78 @@ async function config(env: Record<string, string>): Promise<{ services: Record<s
 
 describe("docker-compose.yml trust boundaries (tester)", () => {
   it("does not publish Postgres or the worker to the host", async () => {
-    const { services } = await config({ POSTGRES_PASSWORD: "pw12345" });
+    const { services } = await config(PW);
     expect(services.postgres?.ports ?? []).toEqual([]);
     expect(services.worker?.ports ?? []).toEqual([]);
   });
 
   it("publishes only the web app, on 127.0.0.1, container port 3000", async () => {
-    const { services } = await config({ POSTGRES_PASSWORD: "pw12345" });
+    const { services } = await config(PW);
     const published = Object.entries(services).flatMap(([name, s]) => (s.ports ?? []).map((p) => ({ name, ...p })));
     expect(published).toHaveLength(1);
     expect(published[0]).toMatchObject({ name: "web", host_ip: "127.0.0.1", target: 3000 });
   });
 
   it("keeps the 127.0.0.1 binding when WEB_PORT is overridden, and ignores a hostile WEB_HOST-style override", async () => {
-    const { services } = await config({ POSTGRES_PASSWORD: "pw12345", WEB_PORT: "4123", HOST: "0.0.0.0", WEB_HOST: "0.0.0.0" });
+    const { services } = await config({ ...PW, WEB_PORT: "4123", HOST: "0.0.0.0", WEB_HOST: "0.0.0.0" });
     expect(services.web?.ports).toEqual([expect.objectContaining({ host_ip: "127.0.0.1", published: "4123", target: 3000 })]);
   });
 
-  it("refuses to start without POSTGRES_PASSWORD (no default password), and the error does not need a value", async () => {
-    await expect(config({})).rejects.toMatchObject({ stderr: expect.stringContaining("POSTGRES_PASSWORD") });
+  it.each(PASSWORD_VARS)("refuses to start without %s (no default password), and the error does not need a value", async (name) => {
+    await expect(config(without(name))).rejects.toMatchObject({ stderr: expect.stringContaining(name) });
   });
 
   it("refuses to start from an unedited copy of .env.example (reviewer L4)", async () => {
     const copied = path.join(emptyDir, ".env");
     copyFileSync(path.join(repo, ".env.example"), copied);
     try {
-      await expect(config({})).rejects.toMatchObject({ stderr: expect.stringContaining("POSTGRES_PASSWORD") });
+      await expect(config({})).rejects.toMatchObject({ stderr: expect.stringMatching(/POSTGRES_PASSWORD|VAULT_MIGRATOR_PASSWORD|VAULT_APP_PASSWORD/) });
+      for (const name of PASSWORD_VARS) {
+        await expect(config(without(name)), name).rejects.toMatchObject({ stderr: expect.stringContaining(name) });
+      }
     } finally {
       rmSync(copied);
     }
   });
 
-  it("refuses an empty POSTGRES_PASSWORD", async () => {
-    await expect(config({ POSTGRES_PASSWORD: "" })).rejects.toMatchObject({ stderr: expect.stringContaining("POSTGRES_PASSWORD") });
+  it.each(PASSWORD_VARS)("refuses an empty %s", async (name) => {
+    await expect(config({ ...PW, [name]: "" })).rejects.toMatchObject({ stderr: expect.stringContaining(name) });
   });
 
-  it("gives web and worker DATABASE_URL via environment only, pointing at the postgres service", async () => {
-    const password = "pw12345";
-    const { services } = await config({ POSTGRES_PASSWORD: password });
+  it("gives web and worker DATABASE_URL via environment only, as vault_app (decision 3), pointing at the postgres service", async () => {
+    const { services } = await config(PW);
     for (const name of ["web", "worker"]) {
-      expect(services[name]?.environment?.DATABASE_URL).toBe(`postgres://vault:${password}@postgres:5432/vault`);
+      expect(services[name]?.environment?.DATABASE_URL).toBe(`postgres://vault_app:${PW.VAULT_APP_PASSWORD}@postgres:5432/vault`);
       expect(services[name]?.env_file).toBeUndefined();
     }
   });
 
+  it("only the migrate service gets vault_migrator; no app service gets the superuser or another role's password", async () => {
+    const { services } = await config(PW);
+    expect(services.migrate?.environment?.DATABASE_URL).toBe(`postgres://vault_migrator:${PW.VAULT_MIGRATOR_PASSWORD}@postgres:5432/vault`);
+    for (const name of ["web", "worker", "migrate"]) {
+      const env = JSON.stringify(services[name]?.environment ?? {});
+      expect(env, name).not.toContain(PW.POSTGRES_PASSWORD);
+      if (name !== "migrate") expect(env, name).not.toContain(PW.VAULT_MIGRATOR_PASSWORD);
+      if (name === "migrate") expect(env, name).not.toContain(PW.VAULT_APP_PASSWORD);
+    }
+  });
+
+  it("Postgres gets the roles init script and both role passwords, so a new volume creates vault_migrator and vault_app", async () => {
+    const { services, configs } = (await config(PW)) as unknown as {
+      services: Record<string, Service & { configs?: { source: string; target: string }[] }>;
+      configs: Record<string, { file?: string }>;
+    };
+    expect(services.postgres?.environment).toMatchObject({ VAULT_MIGRATOR_PASSWORD: PW.VAULT_MIGRATOR_PASSWORD, VAULT_APP_PASSWORD: PW.VAULT_APP_PASSWORD });
+    const mounted = services.postgres?.configs ?? [];
+    expect(mounted).toEqual([expect.objectContaining({ target: "/docker-entrypoint-initdb.d/10-vault-roles.sh" })]);
+    // Resolved against the (empty) project directory this test uses; the file itself is in the repo.
+    expect(configs[mounted[0]!.source]?.file).toBe(path.join(emptyDir, "packages/db/initdb/10-vault-roles.sh"));
+    expect(existsSync(path.join(repo, "packages/db/initdb/10-vault-roles.sh"))).toBe(true);
+  });
+
   it("does not give any service host networking or privileges", async () => {
-    const { services } = await config({ POSTGRES_PASSWORD: "pw12345" });
+    const { services } = await config(PW);
     for (const s of Object.values(services)) {
       expect(s.privileged).toBeFalsy();
       expect(s.network_mode).toBeUndefined();
@@ -95,14 +128,14 @@ describe("docker-compose.yml trust boundaries (tester)", () => {
   });
 
   it("does not bind-mount host paths (data lives in a named volume)", async () => {
-    const { services } = await config({ POSTGRES_PASSWORD: "pw12345" });
+    const { services } = await config(PW);
     for (const s of Object.values(services)) {
       for (const v of s.volumes ?? []) expect(v.type).toBe("volume");
     }
   });
 
   it("starts web and worker only after Postgres is healthy, and all three restart and have healthchecks", async () => {
-    const { services } = await config({ POSTGRES_PASSWORD: "pw12345" });
+    const { services } = await config(PW);
     for (const name of ["web", "worker"]) {
       expect(services[name]?.depends_on?.postgres?.condition).toBe("service_healthy");
     }
@@ -113,10 +146,30 @@ describe("docker-compose.yml trust boundaries (tester)", () => {
   });
 });
 
-describe("container hardening and pinned base images (reviewer L5)", () => {
-  it("web and worker run with an init process, no new privileges and no Linux capabilities", async () => {
-    const { services } = await config({ POSTGRES_PASSWORD: "pw12345" });
+describe("migration gate (review L7)", () => {
+  it("a one-shot migrate service runs the migrate CLI from the worker image, once, after Postgres is healthy", async () => {
+    const { services } = await config(PW);
+    const migrate = services.migrate;
+    expect(migrate?.build?.dockerfile).toBe("apps/worker/Dockerfile");
+    expect(migrate?.command).toEqual(["node", "packages/db/src/cli.ts", "up"]);
+    expect(migrate?.restart ?? "no").toBe("no");
+    expect(migrate?.depends_on?.postgres?.condition).toBe("service_healthy");
+    expect(migrate?.environment?.DATABASE_URL).toBe(`postgres://vault_migrator:${PW.VAULT_MIGRATOR_PASSWORD}@postgres:5432/vault`);
+    expect(migrate?.ports ?? []).toEqual([]);
+  });
+
+  it("web and worker start only after migrate completed successfully", async () => {
+    const { services } = await config(PW);
     for (const name of ["web", "worker"]) {
+      expect(services[name]?.depends_on?.migrate?.condition, name).toBe("service_completed_successfully");
+    }
+  });
+});
+
+describe("container hardening and pinned base images (reviewer L5)", () => {
+  it("web, worker and migrate run with an init process, no new privileges and no Linux capabilities", async () => {
+    const { services } = await config(PW);
+    for (const name of ["web", "worker", "migrate"]) {
       expect(services[name]?.init, name).toBe(true);
       expect(services[name]?.security_opt, name).toContain("no-new-privileges:true");
       expect(services[name]?.cap_drop, name).toEqual(["ALL"]);
@@ -124,12 +177,12 @@ describe("container hardening and pinned base images (reviewer L5)", () => {
   });
 
   it("Postgres keeps the capabilities its entrypoint needs to drop to the postgres user", async () => {
-    const { services } = await config({ POSTGRES_PASSWORD: "pw12345" });
+    const { services } = await config(PW);
     expect(services.postgres?.cap_drop ?? []).not.toContain("ALL");
   });
 
   it("pins Postgres to a minor version and Alpine release, and the DB tests use the same image", async () => {
-    const { services } = await config({ POSTGRES_PASSWORD: "pw12345" });
+    const { services } = await config(PW);
     expect(services.postgres?.image).toMatch(/^postgres:\d+\.\d+-alpine\d+\.\d+$/);
     const setup = readFileSync(path.join(repo, "packages/db/test/support/global-setup.ts"), "utf8");
     expect(setup).toContain(`POSTGRES_IMAGE = "${services.postgres?.image}"`);

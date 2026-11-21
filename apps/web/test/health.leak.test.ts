@@ -1,4 +1,4 @@
-import { createDb } from "@vault/db";
+import { closeDatabase, openDatabase } from "@vault/db";
 import { afterAll, describe, expect, it } from "vitest";
 import { getHealth, healthResponse } from "../src/server/health.ts";
 
@@ -20,9 +20,11 @@ describe("health response does not leak (tester, abuse case: read secrets via he
       },
       readHeartbeat: async () => new Date(),
       version: "1.2.3",
+      readSchemaVersion: async () => "0003_audit_log",
+      expectedSchemaVersion: "0003_audit_log",
     });
     expect(result.httpStatus).toBe(503);
-    expect(Object.keys(result.body).sort()).toEqual(["db", "status", "version", "workerHeartbeat"]);
+    expect(Object.keys(result.body).sort()).toEqual(["db", "schema", "status", "version", "workerHeartbeat"]);
     assertNothingSensitive(JSON.stringify(result.body));
   });
 
@@ -33,9 +35,11 @@ describe("health response does not leak (tester, abuse case: read secrets via he
         throw new Error(URL_WITH_SECRET);
       },
       version: "1.2.3",
+      readSchemaVersion: async () => "0003_audit_log",
+      expectedSchemaVersion: "0003_audit_log",
     });
     expect(result.httpStatus).toBe(200);
-    expect(Object.keys(result.body).sort()).toEqual(["db", "status", "version", "workerHeartbeat"]);
+    expect(Object.keys(result.body).sort()).toEqual(["db", "schema", "status", "version", "workerHeartbeat"]);
     assertNothingSensitive(JSON.stringify(result.body));
   });
 
@@ -46,18 +50,20 @@ describe("health response does not leak (tester, abuse case: read secrets via he
       },
       readHeartbeat: async () => new Date("2026-11-21T10:00:00.000Z"),
       version: "1.2.3",
+      readSchemaVersion: async () => "0003_audit_log",
+      expectedSchemaVersion: "0003_audit_log",
     });
     expect(result.body.workerHeartbeat).toBeNull();
   });
 
   describe("real pool against an unreachable host with a password in the URL", () => {
-    const dbs: ReturnType<typeof createDb>[] = [];
+    const dbs: ReturnType<typeof openDatabase>[] = [];
     afterAll(async () => {
-      await Promise.all(dbs.map((d) => d.destroy()));
+      await Promise.all(dbs.map((d) => closeDatabase(d)));
     });
 
     it("503 response body and headers contain nothing from the connection string or the driver error", async () => {
-      const db = createDb(URL_WITH_SECRET);
+      const db = openDatabase(URL_WITH_SECRET);
       dbs.push(db);
       const res = await healthResponse(db);
       expect(res.status).toBe(503);
@@ -67,11 +73,11 @@ describe("health response does not leak (tester, abuse case: read secrets via he
       const text = await res.text();
       assertNothingSensitive(text);
       assertNothingSensitive(headers);
-      expect(JSON.parse(text)).toEqual({ status: "error", db: "down", version: expect.any(String), workerHeartbeat: null });
+      expect(JSON.parse(text)).toEqual({ status: "error", db: "down", version: expect.any(String), schema: { expected: expect.any(String), applied: null }, workerHeartbeat: null });
     });
 
     it("503 for a URL pg cannot parse (TypeError path) is the same clean body", async () => {
-      const db = createDb(`postgres://vault:${PASSWORD}@${HOST}:notaport/vault`);
+      const db = openDatabase(`postgres://vault:${PASSWORD}@${HOST}:notaport/vault`);
       dbs.push(db);
       const res = await healthResponse(db);
       expect(res.status).toBe(503);

@@ -1,0 +1,46 @@
+=== Privacy: columns that exist (people, users, audit_log) ===
+ table_name |                                                           columns                                                           
+------------+-----------------------------------------------------------------------------------------------------------------------------
+ audit_log  | id, at, actor_user_id, action, entity_type, entity_id, ip_prefix, details
+ people     | id, owner_person_id, visibility, created_at, updated_at, created_by_user_id, updated_by_user_id, display_name, relationship
+ users      | id, person_id, role, created_at, updated_at, deactivated_at
+(3 rows)
+
+=== audit_log: actions recorded by the repository run, and any name/value leaking into details ===
+     action     | entity_type | count 
+----------------+-------------+-------
+ create         | person      |     5
+ delete         | person      |     3
+ sign_in        |             |     3
+ sign_in_failed |             |     1
+ update         | person      |     7
+ view           | person      |    11
+(6 rows)
+
+ detail_rows_with_a_name_or_qa_text 
+------------------------------------
+                                  0
+(1 row)
+
+                             details                             
+-----------------------------------------------------------------
+ {"fields": ["visibility"]}
+ {"fields": ["display_name", "relationship", "owner_person_id"]}
+ {"fields": ["display_name", "owner_person_id", "visibility"]}
+ {"fields": ["relationship"]}
+ {"fields": ["display_name"]}
+ {"fields": ["display_name", "visibility"]}
+ {"fields": ["display_name", "owner_person_id"]}
+(7 rows)
+
+=== Criterion 1: every business table has owner, visibility, timestamps ===
+      table_name       | owner | visibility | created_at | updated_at | created_by | updated_by 
+-----------------------+-------+------------+------------+------------+------------+------------
+ _meta                 | f     | f          | f          | t          | f          | f
+ audit_log             | f     | f          | f          | f          | f          | f
+ kysely_migration      | f     | f          | f          | f          | f          | f
+ kysely_migration_lock | f     | f          | f          | f          | f          | f
+ people                | t     | t          | t          | t          | t          | t
+ users                 | f     | f          | t          | t          | f          | f
+(6 rows)
+

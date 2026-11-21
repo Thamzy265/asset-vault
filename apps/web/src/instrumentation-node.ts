@@ -1,4 +1,4 @@
-import { createDb, log, waitForDatabaseReady } from "@vault/db";
+import { closeDatabase, log, openDatabase, waitForDatabaseReady } from "@vault/db";
 import { startupCheck } from "./server/startup.ts";
 
 /** Node.js-only start-up work, loaded from instrumentation.ts. */
@@ -10,11 +10,11 @@ export function runNodeStartup(): void {
     exit: (code) => process.exit(code),
     log,
     wait: async (databaseUrl) => {
-      const db = createDb(databaseUrl, { maxConnections: 1 });
+      const db = openDatabase(databaseUrl, { maxConnections: 1 });
       try {
         await waitForDatabaseReady(db);
       } finally {
-        await db.destroy();
+        await closeDatabase(db);
       }
     },
   });

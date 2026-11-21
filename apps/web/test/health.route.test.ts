@@ -1,3 +1,4 @@
+import { closeDatabase } from "@vault/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as route from "../src/app/api/v1/health/route.ts";
 import { getDb } from "../src/server/db.ts";
@@ -12,7 +13,7 @@ describe("GET /api/v1/health route module (tester)", () => {
   afterAll(async () => {
     if (saved === undefined) delete process.env.DATABASE_URL;
     else process.env.DATABASE_URL = saved;
-    await getDb().destroy();
+    await closeDatabase(getDb());
     delete (globalThis as { vaultDb?: unknown }).vaultDb;
   });
 
