@@ -34,6 +34,7 @@ docker compose down -v        # also deletes the database volume (all data)
 pnpm install
 pnpm check      # ESLint + TypeScript + Vitest unit/integration tests + secret scan
 pnpm test:e2e   # Playwright against the running stack (start it first)
+pnpm deps:audit # known vulnerabilities in production dependencies (needs the network)
 ```
 
 `pnpm check` needs Docker running: database tests start a throwaway Postgres container. Set `TEST_DATABASE_URL` to use an existing throwaway server instead.
