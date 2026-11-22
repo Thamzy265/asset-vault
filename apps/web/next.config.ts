@@ -9,6 +9,9 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: repoRoot,
   transpilePackages: ["@vault/db"],
   poweredByHeader: false,
+  // The app shows no images through next/image, so the image optimizer (/_next/image) is off: it is a public
+  // endpoint that fetches and re-encodes whatever it is pointed at, and wrote to a read-only cache (M1.3 T8).
+  images: { unoptimized: true },
 };
 
 export default nextConfig;

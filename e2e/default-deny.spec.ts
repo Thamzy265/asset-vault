@@ -148,10 +148,20 @@ test("only /api/v1/health (and a trailing-slash redirect to it) is public: look-
   }
 });
 
-test("every verb is refused signed out, on the real route and on a path nothing serves; OPTIONS never grants CORS", async () => {
+const SUPPORTED = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
+const UNSUPPORTED = ["TRACE", "PROPFIND", "PURGE", "LINK", "MKCOL", "SEARCH"];
+const noCors = { origin: "https://evil.example", "access-control-request-method": "GET", "access-control-request-headers": "authorization" };
+
+/** The web container's own output, to check what a request left behind (stack traces, unhandled rejections). */
+async function webLog(): Promise<string> {
+  const out = await run("docker", ["compose", "-p", project, "logs", "--no-color", "--no-log-prefix", "web"], { timeout: 60_000, maxBuffer: 20 * 1024 * 1024 });
+  return `${out.stdout}\n${out.stderr}`;
+}
+
+test("every verb the app uses is refused signed out, on the real route and on a path nothing serves; OPTIONS never grants CORS", async () => {
   for (const path of ["/api/v1/me", "/api/v1/nothing-here", "/api/v1"]) {
-    for (const method of ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "PROPFIND", "PURGE", "LINK"]) {
-      const res = await rawRequest(path, { method, headers: { origin: "https://evil.example", "access-control-request-method": "GET", "access-control-request-headers": "authorization" } });
+    for (const method of SUPPORTED) {
+      const res = await rawRequest(path, { method, headers: noCors });
       expect(res.status, `${method} ${path}`).toBe(401);
       expect(res.headers.get("access-control-allow-origin"), `${method} ${path}`).toBeUndefined();
       expect(res.headers.get("access-control-allow-credentials"), `${method} ${path}`).toBeUndefined();
@@ -159,10 +169,18 @@ test("every verb is refused signed out, on the real route and on a path nothing 
   }
 });
 
-test("BUG (low): an unsupported verb such as TRACE gets a JSON refusal, not a bare 500 with a stack trace in the server log", async () => {
-  // Next's own runtime throws "'TRACE' HTTP method is unsupported" before the gate runs, on every path.
-  const res = await rawRequest("/api/v1/me", { method: "TRACE" });
-  expect(res.status).toBeLessThan(500);
+test("a method the app doesn't use (TRACE and the like) is a JSON 405 with an Allow header on every path, before Next's runtime; no stack trace is logged", async () => {
+  for (const method of UNSUPPORTED) {
+    for (const path of ["/api/v1/me", "/api/v1/nothing-here", "/api/v1/health", "/api/auth/sign-in", "/sign-in", "/", "/_next/image?url=%2F&w=64&q=75", "/does-not-exist"]) {
+      const res = await rawRequest(path, { method, headers: noCors });
+      expect(res.status, `${method} ${path}`).toBe(405);
+      expect(res.headers.get("allow")?.[0], `${method} ${path}`).toBe(SUPPORTED.join(", "));
+      expect(JSON.parse(res.body), `${method} ${path}`).toEqual({ error: { code: "method_not_allowed", message: expect.any(String) } });
+      expect(res.headers.get("access-control-allow-origin"), `${method} ${path}`).toBeUndefined();
+    }
+  }
+  const log = await webLog();
+  expect(log).not.toMatch(/method is unsupported|TypeError|\n\s+at (async )?\w[\w.<>]* \(/i);
 });
 
 test("nothing the client sends can stand in for a session: Authorization, API-key and identity headers, the Next middleware bypass headers, a stolen-looking cookie", async () => {
@@ -265,10 +283,15 @@ test("page requests: signed out and password-only go to sign-in whatever the RSC
   }
 });
 
-test("BUG (low): the unused image optimizer is not an anonymous 500 with an unhandled rejection (EACCES on the read-only .next/cache)", async () => {
-  // The app uses no next/image, yet /_next/image is public and answers 500 when it is pointed at a page.
-  const res = await rawRequest("/_next/image?url=%2F&w=64&q=75");
-  expect(res.status).toBeLessThan(500);
+test("the image optimizer is off: /_next/image is not served (404 or 405), never a 500, and leaves no unhandled rejection in the log", async () => {
+  for (const path of ["/_next/image?url=%2F&w=64&q=75", "/_next/image?url=%2Fapi%2Fv1%2Fme&w=64&q=75", "/_next/image", "/_next/image?url=http%3A%2F%2F127.0.0.1%3A3000%2F&w=64&q=75"]) {
+    for (const method of ["GET", "HEAD", "POST"]) {
+      const res = await rawRequest(path, { method });
+      expect([404, 405], `${method} ${path}`).toContain(res.status);
+    }
+  }
+  const log = await webLog();
+  expect(log).not.toMatch(/unhandledRejection|EACCES|ENOENT|image-optimizer|imageOptimizer/i);
 });
 
 test("a page that does not exist doesn't reflect the path, give a stack trace or set a cookie", async () => {

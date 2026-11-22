@@ -20,6 +20,8 @@ WORKDIR /app
 # Root-owned and read-only for the runtime user: the app can't change its own code.
 COPY --from=build /repo/apps/web/.next/standalone ./
 COPY --from=build /repo/apps/web/.next/static ./apps/web/.next/static
+# The method gate that runs in front of Next (M1.3 T7); plain JavaScript, loaded before server.js.
+COPY --from=build /repo/apps/web/http-gate.mjs /repo/apps/web/http-gate-preload.mjs ./apps/web/
 USER node
 EXPOSE 3000
-CMD ["node", "apps/web/server.js"]
+CMD ["node", "--import", "./apps/web/http-gate-preload.mjs", "apps/web/server.js"]
