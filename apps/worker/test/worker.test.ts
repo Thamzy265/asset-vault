@@ -5,6 +5,7 @@ import { migrateUp } from "../../../packages/db/test/support/migrate.ts";
 import { rawQuery } from "../../../packages/db/test/support/raw-sql.ts";
 import { throughSilentProxy } from "../../../packages/db/test/support/silent-proxy.ts";
 import { AUDIT_RETENTION_CRON, AUDIT_RETENTION_QUEUE } from "../src/audit-retention-job.ts";
+import { AUTH_CLEANUP_CRON, AUTH_CLEANUP_QUEUE } from "../src/auth-cleanup-job.ts";
 import { HEARTBEAT_QUEUE } from "../src/heartbeat-job.ts";
 import { BOSS_TIMEOUTS, startWorker, type RunningWorker } from "../src/worker.ts";
 
@@ -67,6 +68,19 @@ describe("startWorker (real Postgres)", () => {
     const expired = async () =>
       (await rawQuery<{ n: number }>(url, "select count(*)::int as n from audit_log where at < now() - interval '2 years'"))[0]?.n;
     await expect.poll(expired, { timeout: 15_000, interval: 250 }).toBe(0);
+  });
+
+  it("schedules the auth cleanup and deletes expired sessions when the job runs (M1.3)", async () => {
+    expect(worker).toBeDefined();
+    const schedules = await worker!.boss.getSchedules(AUTH_CLEANUP_QUEUE);
+    expect(schedules.map((s) => s.cron)).toEqual([AUTH_CLEANUP_CRON]);
+
+    await rawQuery(url, `with u as (insert into users (role) values ('member') returning id),
+      a as (insert into auth_users (id, email, name) select id, 'w@example.org', 'W' from u returning id)
+      insert into auth_sessions (user_id, token, expires_at) select id, 'expired-token', now() - interval '1 minute' from a`);
+    await worker!.boss.send(AUTH_CLEANUP_QUEUE);
+    const left = async () => (await rawQuery<{ n: number }>(url, "select count(*)::int as n from auth_sessions where token = 'expired-token'"))[0]?.n;
+    await expect.poll(left, { timeout: 15_000, interval: 250 }).toBe(0);
   });
 
   it("refuses to start before migration 0004 made the job queue schema (it never creates schemas itself)", async () => {

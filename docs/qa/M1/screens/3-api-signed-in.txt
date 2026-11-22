@@ -1,0 +1,16 @@
+sign-in with foreign Origin -> 403 {"error":{"code":"forbidden","message":"This request was refused."}}
+sign-in with no Origin -> 403
+password step -> 200 body keys: next
+Set-Cookie after password step (masked):
+   __Secure-vault.session_token=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax
+   __Secure-vault.session_data=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax
+   __Secure-vault.two_factor=****g%3D; Max-Age=600; Path=/; HttpOnly; Secure; SameSite=Lax
+/me with the password-step cookie only -> 401 {"error":{"code":"unauthorized","message":"Sign in to continue."}}
+code step -> 200
+Set-Cookie after code step (masked):
+   __Secure-vault.session_token=****8%3D; Max-Age=86400; Path=/; HttpOnly; Secure; SameSite=Lax
+   __Secure-vault.two_factor=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax
+/me signed in -> 200 {"id":"<uuid>","name":"QA Admin","role":"admin","personId":"<uuid>"}
+  headers: cache-control=no-store; content-security-policy=default-src 'self'; script-src 'self' 'n; x-content-type-options=nosniff; referrer-policy=same-origin; x-request-id=cc9666a7-63f5-4111-a686-cba91e75d99b
+timing wrong pw known email: [[401,102],[401,105]]
+timing unknown email: [[401,105],[401,101]]

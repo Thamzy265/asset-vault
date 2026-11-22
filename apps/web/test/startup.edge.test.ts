@@ -23,7 +23,7 @@ describe("web start-up check never logs the connection string (tester)", () => {
     const lines: string[] = [];
     const exits: number[] = [];
     await startupCheck({
-      env: { DATABASE_URL: `postgres://vault:${SECRET}@host/db` },
+      env: { DATABASE_URL: `postgres://vault:${SECRET}@host/db`, APP_URL: "http://127.0.0.1:3000", AUTH_ENCRYPTION_KEY: "k".repeat(40) },
       exit: (c) => void exits.push(c),
       log: (level, msg, fields) => void lines.push(JSON.stringify({ level, msg, ...fields })),
       wait: async () => {

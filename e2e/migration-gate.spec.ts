@@ -26,6 +26,7 @@ const env = {
   POSTGRES_PASSWORD: password,
   VAULT_MIGRATOR_PASSWORD: migratorPassword,
   VAULT_APP_PASSWORD: appPassword,
+  AUTH_ENCRYPTION_KEY: randomBytes(32).toString("hex"),
   WEB_PORT: port,
   VAULT_IMAGES: images,
 };

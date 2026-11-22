@@ -5,7 +5,9 @@ import { migrateDown, migrateUp, migrations } from "../../../packages/db/test/su
 import { getHealth, healthResponse } from "../src/server/health.ts";
 import pkg from "../package.json" with { type: "json" };
 
-const LATEST = "0004_database_roles";
+// The last migration in the code, and the one before it (what a one-step rollback leaves applied).
+const LATEST = Object.keys(migrations).at(-1)!;
+const PREVIOUS = Object.keys(migrations).at(-2)!;
 const schemaOk = { readSchemaVersion: async () => LATEST, expectedSchemaVersion: LATEST };
 
 describe("getHealth", () => {
@@ -128,10 +130,9 @@ describe("healthResponse (real Postgres)", () => {
     try {
       await migrate("up");
       expect(await migrate("down")).toEqual([LATEST]);
-      // Rolling back 0004 also takes back the app role's right to read the schema version.
       const res = await healthResponse(db);
       expect(res.status).toBe(503);
-      expect(await res.json()).toMatchObject({ status: "error", db: "ok", schema: { expected: LATEST, applied: null } });
+      expect(await res.json()).toMatchObject({ status: "error", db: "ok", schema: { expected: LATEST, applied: PREVIOUS } });
       await migrate("up");
       expect((await healthResponse(db)).status).toBe(200);
     } finally {
@@ -152,8 +153,9 @@ describe("healthResponse (real Postgres)", () => {
     }
   });
 
-  it("the expected version is the last migration in the code", () => {
-    expect(Object.keys(migrations).at(-1)).toBe(LATEST);
+  it("the expected version is the last migration in the code", async () => {
+    const { EXPECTED_SCHEMA_VERSION } = await import("@vault/db");
+    expect(EXPECTED_SCHEMA_VERSION).toBe(LATEST);
   });
 
   it("returns 503 with db down when Postgres is unreachable", async () => {

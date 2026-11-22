@@ -8,8 +8,10 @@ test("health endpoint reports ok with the database up", async ({ request }) => {
   expect(body.version).toMatch(/^\d+\.\d+\.\d+/);
 });
 
-test("home page loads with the app title", async ({ page }) => {
+// M1.3: the home page needs a signed-in user; without one it sends you to sign in.
+test("home page sends a signed-out visitor to sign in, under the app title", async ({ page }) => {
   await page.goto("/");
+  await expect(page).toHaveURL(/\/sign-in$/);
   await expect(page).toHaveTitle("Family Asset Vault");
-  await expect(page.getByRole("heading", { level: 1, name: "Family Asset Vault" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Sign in" })).toBeVisible();
 });

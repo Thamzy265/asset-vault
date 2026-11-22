@@ -33,8 +33,10 @@ type Service = {
   build?: { dockerfile?: string };
 };
 
-// All three passwords (decision 3: the bootstrap superuser, vault_migrator, vault_app).
-const PW = { POSTGRES_PASSWORD: "pw12345", VAULT_MIGRATOR_PASSWORD: "mig12345", VAULT_APP_PASSWORD: "app12345" };
+// All three passwords (decision 3: the bootstrap superuser, vault_migrator, vault_app), and the
+// sign-in key (M1.3: AUTH_ENCRYPTION_KEY, empty in .env.example, so Compose must refuse to start).
+const AUTH_KEY = "authkey".repeat(6);
+const PW = { POSTGRES_PASSWORD: "pw12345", VAULT_MIGRATOR_PASSWORD: "mig12345", VAULT_APP_PASSWORD: "app12345", AUTH_ENCRYPTION_KEY: AUTH_KEY };
 const PASSWORD_VARS = Object.keys(PW) as Array<keyof typeof PW>;
 const without = (name: keyof typeof PW) => Object.fromEntries(Object.entries(PW).filter(([k]) => k !== name));
 
@@ -74,7 +76,7 @@ describe("docker-compose.yml trust boundaries (tester)", () => {
     const copied = path.join(emptyDir, ".env");
     copyFileSync(path.join(repo, ".env.example"), copied);
     try {
-      await expect(config({})).rejects.toMatchObject({ stderr: expect.stringMatching(/POSTGRES_PASSWORD|VAULT_MIGRATOR_PASSWORD|VAULT_APP_PASSWORD/) });
+      await expect(config({})).rejects.toMatchObject({ stderr: expect.stringMatching(/POSTGRES_PASSWORD|VAULT_MIGRATOR_PASSWORD|VAULT_APP_PASSWORD|AUTH_ENCRYPTION_KEY/) });
       for (const name of PASSWORD_VARS) {
         await expect(config(without(name)), name).rejects.toMatchObject({ stderr: expect.stringContaining(name) });
       }
@@ -143,6 +145,24 @@ describe("docker-compose.yml trust boundaries (tester)", () => {
       expect(services[name]?.restart).toBe("unless-stopped");
       expect(services[name]?.healthcheck).toBeDefined();
     }
+  });
+});
+
+describe("sign-in settings (M1.3)", () => {
+  it("web gets AUTH_ENCRYPTION_KEY, APP_URL (default: the local address on WEB_PORT) and no trusted IP header by default", async () => {
+    const { services } = await config({ ...PW, WEB_PORT: "4123" });
+    expect(services.web?.environment).toMatchObject({ AUTH_ENCRYPTION_KEY: AUTH_KEY, APP_URL: "http://127.0.0.1:4123", AUTH_TRUSTED_IP_HEADER: "" });
+  });
+
+  it("APP_URL and the trusted IP header can be set (behind Cloudflare, M1.4)", async () => {
+    const { services } = await config({ ...PW, APP_URL: "https://vault.example.org", AUTH_TRUSTED_IP_HEADER: "cf-connecting-ip" });
+    expect(services.web?.environment).toMatchObject({ APP_URL: "https://vault.example.org", AUTH_TRUSTED_IP_HEADER: "cf-connecting-ip" });
+    expect(services.worker?.environment?.APP_URL).toBe("https://vault.example.org");
+  });
+
+  it("only web gets the key: the worker (and the user commands run in its image) and migrate never see it", async () => {
+    const { services } = await config(PW);
+    for (const name of ["worker", "migrate", "postgres"]) expect(JSON.stringify(services[name]?.environment ?? {}), name).not.toContain(AUTH_KEY);
   });
 });
 

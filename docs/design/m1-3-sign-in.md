@@ -34,6 +34,28 @@ Trivially small: < 10 users, a few sign-ins a day.
 ## Data
 Auth tables owned by the auth library (Better Auth: `user`, `session`, `account`, `verification`, `two_factor`), created by **our own Kysely up/down migrations** matching the library's schema, not by the library's CLI (keeps migrations reversible). `users` from M1.2 becomes the library's `user` table (or a 1:1 extension of it — developer picks the cleaner fit and explains in the hand-off). Setup tokens: hashed, single-use, 24 h expiry. Backup codes stored hashed. TOTP secret encrypted at rest with a key from env (`AUTH_ENCRYPTION_KEY`).
 
+## As built (2026-11-21, developer deviations accepted by the lead)
+- Better Auth's user is a 1:1 extension table `auth_users` (same id, ON DELETE CASCADE from `users`); `users` keeps only id, role, person_id, deactivated_at.
+- Deactivation **deletes** the `auth_users` row (email, name) and, by cascade, every auth row — stronger than the placeholder email described under Privacy, which this replaces.
+- New table `auth_sign_in_failures`: keyed hash (HMAC) of the email typed plus the IP prefix or "unknown"; kept 15 minutes; gives per-account limits without revealing which emails exist.
+- Sessions store the token and user agent only; no IP.
+- CSP uses a per-request nonce with `strict-dynamic` (Next.js needs its bootstrap scripts); `unsafe-inline` is never allowed.
+- Default deny means a signed-out caller gets 401 (not 404) for unknown `/api/v1` paths and 401/503 while the database is down.
+- `pnpm user:create` and `pnpm user:deactivate` run as `vault_app` (Later line for a narrower role).
+- Known limit until M1.4: without a trusted client-IP header every client shares one per-network budget (20 failures / 15 min), so repeated wrong passwords can pause sign-in for everyone for up to 15 minutes. M1.4 must set `AUTH_TRUSTED_IP_HEADER=cf-connecting-ip`.
+
+## Lead decisions after the tester round (2026-11-22, PM reviews on return)
+The tester's questions Q1–Q7 and bugs T1–T8. Decided under the PM's standing approval; the PM may change them.
+1. **Re-issuing a setup link ends the person's sessions at once (Q1).** Lost phone means the old device must be locked out now, not when the new link is used. Re-issue also clears the old 2FA enrolment and backup codes. README follows.
+2. **Per-account lock stays as designed (Q2):** 5 failures per email per 15 min, from anywhere. Someone who knows an email can pause that person's sign-in for 15 minutes. This is the design note's own rule, not a new acceptance; **raised to the PM** with the option of keying it by email + IP prefix once M1.4 gives real client addresses.
+3. **Length counts code points (Q3)** — unchanged, and the upper limit must match what Better Auth accepts (see T2). Also refuse passwords that are only whitespace or one repeated character, with the "too common" message.
+4. **A TOTP code is single-use (Q4)** — RFC 6238 §5.2. A code accepted once (sign-in or enrolment confirm) is refused for the rest of its time window. Fixes T1.
+5. **Password alone never hands out an authenticator secret (Q5).** Enrolment can resume only through the setup link: the link stays valid (24 h from issue) until 2FA enrolment is confirmed, and is used up then, not at step 1. A password-only account signing in with the password gets "Please open your setup link again, or ask your admin for a new one" and no secret. Removes the window where a password thief could enrol their own authenticator. UI spec updated.
+6. **Backup codes shown once (Q6)** — intended (standard practice). Recovery is an admin re-issue.
+7. **Decode before the gate's path match (Q7)** — taken as defence in depth; the gate decides on the decoded, normalised path and refuses paths that fail to decode.
+- T7: the gate answers 405 to any method a route doesn't support (including TRACE) before Next's runtime, with no stack trace in the log.
+- T8: turn the Next image optimizer off (`images.unoptimized`); `/_next/image` is not served.
+
 ## Carried from the M1.2 review (must be in the M1.3 build)
 - (a) `Viewer` becomes a branded type that only the session module can create; app code can't build `{ role: "admin" }` by hand. Test it.
 - (b) Every request rejects a deactivated user (not only sign-in): the session check reads `users.deactivated_at`.

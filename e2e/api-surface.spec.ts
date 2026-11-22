@@ -58,34 +58,36 @@ test.describe("health endpoint abuse and edge cases", () => {
     expect(res.headers()["location"]).toBe(PATH);
   });
 
-  test("wrong case, unknown siblings and traversal attempts are 404 without a stack trace", async ({ request }) => {
+  // M1.3: without a session, anything under /api/v1 except /health is refused first (401).
+  test("wrong case, unknown siblings and traversal attempts are refused or 404 without a stack trace", async ({ request }) => {
     for (const p of ["/api/v1/Health", "/api/v1/HEALTH", "/api/v1/nope", "/api/v1/health/extra", "/api/health", "/api/v1/health%2f..%2f..%2fetc%2fpasswd", "/api/v1/health/%2e%2e/%2e%2e/.env"]) {
       const res = await request.get(p, { maxRedirects: 0 });
-      expect([404, 308], p).toContain(res.status());
+      expect([401, 404, 308], p).toContain(res.status());
       expectClean(await res.text());
     }
   });
 
-  // M1.1-T3 (ADR 0003): every /api/v1/* response is JSON, errors included.
-  test("unknown /api/v1 paths answer a JSON 404 with the stable error shape, for every method", async ({ request }) => {
+  // M1.1-T3 (ADR 0003): every /api/v1/* response is JSON, errors included. Since M1.3 a
+  // signed-out caller gets 401 for these (default deny); the signed-in 404 is in sign-in.spec.ts.
+  test("unknown /api/v1 paths answer a JSON 401 with the stable error shape when signed out, for every method", async ({ request }) => {
     const paths = ["/api/v1", "/api/v1/nope", "/api/v1/Health", "/api/v1/health/extra", "/api/v1/health%2f..%2f..%2fetc%2fpasswd", "/api/v1/a/b/c?x=1"];
     for (const p of paths) {
       for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]) {
         const res = await request.fetch(p, { method, maxRedirects: 0 });
-        expect(res.status(), `${method} ${p}`).toBe(404);
+        expect(res.status(), `${method} ${p}`).toBe(401);
         expect(res.headers()["content-type"], `${method} ${p}`).toContain("application/json");
         const text = await res.text();
         expectClean(text);
-        expect(JSON.parse(text), `${method} ${p}`).toEqual({ error: { code: "not_found", message: expect.any(String) } });
+        expect(JSON.parse(text), `${method} ${p}`).toEqual({ error: { code: "unauthorized", message: expect.any(String) } });
       }
       const head = await request.fetch(p, { method: "HEAD", maxRedirects: 0 });
-      expect(head.status(), `HEAD ${p}`).toBe(404);
+      expect(head.status(), `HEAD ${p}`).toBe(401);
     }
   });
 
-  test("the JSON 404 does not reflect the requested path", async ({ request }) => {
+  test("the JSON refusal does not reflect the requested path", async ({ request }) => {
     const res = await request.get("/api/v1/reflectprobe%3Cscript%3E");
-    expect(res.status()).toBe(404);
+    expect(res.status()).toBe(401);
     const text = await res.text();
     expect(text).not.toContain("reflectprobe");
     expect(text).not.toContain("<script>");
@@ -161,7 +163,7 @@ test.describe("health endpoint abuse and edge cases", () => {
     expect(age).toBeGreaterThan(-5_000);
   });
 
-  test("the home page is a normal HTML page and sets no cookies or powered-by header", async ({ request }) => {
+  test("the home page (signed out: the sign-in page) is a normal HTML page and sets no cookies or powered-by header", async ({ request }) => {
     const res = await request.get("/");
     expect(res.status()).toBe(200);
     expect(res.headers()["content-type"]).toContain("text/html");

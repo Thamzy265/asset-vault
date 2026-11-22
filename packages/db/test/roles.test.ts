@@ -9,7 +9,9 @@ import { migrations } from "../src/migrations/index.ts";
 import { peopleRepository } from "../src/people.ts";
 import type { Database } from "../src/schema.ts";
 import { readSchemaVersion } from "../src/schema-version.ts";
+import { migrateTo } from "./support/migrate.ts";
 import { freshDatabase, type FreshDatabase } from "./support/fresh-database.ts";
+import { mintViewer } from "../src/viewer.ts";
 
 // M1.2 decision 3: two database roles. vault_migrator owns the database and the schema and runs
 // migrations; vault_app (web and worker) is not a superuser, owns nothing, and gets only what
@@ -50,6 +52,10 @@ async function appPrivileges(db: Kysely<Database>): Promise<Record<string, strin
 }
 
 const SIUD = ["DELETE", "INSERT", "SELECT", "UPDATE"];
+/** M1.3 item (g): users are deactivated, not deleted (decision 8); only retention deletes them. */
+const SIU = ["INSERT", "SELECT", "UPDATE"];
+/** M1.3 (0007): setup tokens and sign-in failures are added and removed, never edited. */
+const SID = ["DELETE", "INSERT", "SELECT"];
 const AUDIT_INSERT_COLUMNS = ["action", "actor_user_id", "details", "entity_id", "entity_type", "ip_prefix"];
 
 describe("the roles (init script)", () => {
@@ -118,18 +124,29 @@ describe("the roles (init script)", () => {
 });
 
 describe("what vault_app may do (migration 0004)", () => {
-  it("business tables: SELECT, INSERT, UPDATE, DELETE only; audit_log: SELECT and INSERT on the app-settable columns only; the schema version: SELECT", async () => {
+  it("business tables: SELECT, INSERT, UPDATE, DELETE only; audit_log: SELECT and INSERT on the app-settable columns only; the schema version: SELECT; auth tables as decided in 0007 (setup tokens and sign-in failures: no UPDATE); users: no DELETE", async () => {
     expect(await appPrivileges(migrator)).toEqual({
       _meta: SIUD,
       audit_log: [...AUDIT_INSERT_COLUMNS.map((c) => `INSERT(${c})`), "SELECT"],
+      auth_accounts: SIUD,
+      auth_sessions: SIUD,
+      auth_setup_tokens: SID,
+      auth_sign_in_failures: SID,
+      auth_two_factors: SIUD,
+      auth_users: SIUD,
+      auth_verifications: SIUD,
       kysely_migration: ["SELECT"],
       people: SIUD,
-      users: SIUD,
+      users: SIU,
     });
   });
 
   it("every table in public has a deliberate grant decision (a new table without one fails here: grant it in its migration with grantAppAccess)", async () => {
-    const decided = ["_meta", "audit_log", "kysely_migration", "kysely_migration_lock", "people", "users"];
+    const decided = [
+      "_meta", "audit_log",
+      "auth_accounts", "auth_sessions", "auth_setup_tokens", "auth_sign_in_failures", "auth_two_factors", "auth_users", "auth_verifications",
+      "kysely_migration", "kysely_migration_lock", "people", "users",
+    ];
     const { rows } = await sql<{ name: string }>`
       select c.relname as name from pg_class c join pg_namespace n on n.oid = c.relnamespace
       where n.nspname = 'public' and c.relkind in ('r', 'p', 'v', 'm') order by 1`.execute(migrator);
@@ -164,7 +181,7 @@ describe("what vault_app may do (migration 0004)", () => {
   it("every app-side function works as vault_app: people repository, heartbeat, schema version, audit retention", async () => {
     const person = await migrator.insertInto("people").values({ display_name: "App admin" }).returning("id").executeTakeFirstOrThrow();
     const user = await migrator.insertInto("users").values({ role: "admin", person_id: person.id }).returning("id").executeTakeFirstOrThrow();
-    const viewer: Viewer = { userId: user.id, role: "admin", personId: person.id };
+    const viewer: Viewer = mintViewer({ userId: user.id, role: "admin", personId: person.id });
     const people = peopleRepository(app, { log: () => {} });
     const p = await people.create(viewer, { displayName: "Made as vault_app" });
     await people.get(viewer, p.id);
@@ -201,12 +218,37 @@ describe("what vault_app may do (migration 0004)", () => {
   });
 });
 
+describe("users are deactivated, not deleted (M1.3 item g, decision 8)", () => {
+  it("vault_app can't DELETE a user row, but retention (SECURITY DEFINER) still removes an expired deactivated user", async () => {
+    const leaver = await migrator.insertInto("users").values({ role: "member", deactivated_at: new Date() }).returning("id").executeTakeFirstOrThrow();
+    await expect(app.deleteFrom("users").where("id", "=", leaver.id).execute()).rejects.toMatchObject({ code: "42501" });
+    await runAuditRetention(app);
+    expect(await migrator.selectFrom("users").select("id").where("id", "=", leaver.id).executeTakeFirst()).toBeUndefined();
+  });
+
+  it("rolling back 0006 gives DELETE back; up takes it away again", async () => {
+    const own = await freshDatabase();
+    const m = createDb(own.url);
+    try {
+      await migrateTo(m, "0006_users_no_app_delete");
+      expect((await appPrivileges(m)).users).toEqual(SIU);
+      expect(await migrateDown(m)).toEqual(["0006_users_no_app_delete"]);
+      expect((await appPrivileges(m)).users).toEqual(SIUD);
+      await migrateTo(m, "0006_users_no_app_delete");
+      expect((await appPrivileges(m)).users).toEqual(SIU);
+    } finally {
+      await m.destroy();
+      await own.drop();
+    }
+  });
+});
+
 describe("migration 0004 down and up", () => {
   it("down revokes everything vault_app had and drops the pg-boss schema; up grants it all again", async () => {
     const own = await freshDatabase();
     const m = createDb(own.url);
     try {
-      await migrateUp(m);
+      await migrateTo(m, "0004_database_roles");
       const granted = await appPrivileges(m);
       expect(await migrateDown(m)).toEqual(["0004_database_roles"]);
       expect(await appPrivileges(m)).toEqual({});
@@ -218,7 +260,7 @@ describe("migration 0004 down and up", () => {
       await app2.connect();
       await expect(app2.query("select 1 from people")).rejects.toMatchObject({ code: "42501" });
       await app2.end();
-      await migrateUp(m);
+      await migrateTo(m, "0004_database_roles");
       expect(await appPrivileges(m)).toEqual(granted);
     } finally {
       await m.destroy();

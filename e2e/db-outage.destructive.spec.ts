@@ -29,9 +29,13 @@ test("health is 503 with a clean body while Postgres is down, and recovers witho
     expect(text).not.toMatch(re);
   }
 
-  // The page itself and the 404 path keep working while the database is down.
+  // The pages keep answering while the database is down; the API stays closed (M1.3: no
+  // session cookie is refused at once, 401; one that can't be checked would be 503).
   expect((await request.get("/")).status()).toBe(200);
-  expect((await request.get("/api/v1/nope")).status()).toBe(404);
+  expect((await request.get("/sign-in")).status()).toBe(200);
+  expect([401, 503]).toContain((await request.get("/api/v1/nope")).status());
+  const withCookie = await request.get("/api/v1/me", { headers: { cookie: "__Secure-vault.session_token=x.y" } });
+  expect([401, 503]).toContain(withCookie.status());
 
   await compose("start", "postgres");
   await expect.poll(async () => (await request.get("/api/v1/health")).status(), { timeout: 60_000, intervals: [2_000] }).toBe(200);

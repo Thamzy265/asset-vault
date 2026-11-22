@@ -11,7 +11,7 @@ describe("unknown /api/v1/* paths answer with a JSON 404", () => {
   });
 
   it.each(METHODS)("%s returns 404 with the stable error shape", async (method) => {
-    const res = route[method]();
+    const res = await route[method]();
     expect(res.status).toBe(404);
     expect(res.headers.get("content-type")).toContain("application/json");
     const body = await res.json();

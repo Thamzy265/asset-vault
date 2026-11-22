@@ -1,0 +1,9 @@
+web+worker+migrate log lines: 80
+secrets checked against app logs: 55 (passwords x3, TOTP keys x3, 30 backup codes, 11 TOTP codes, setup tokens x4, DB passwords x3, auth key) -> leaks: 0
+pattern email address: 0 matches in app logs
+pattern example.org: 0 matches in app logs
+pattern QA name: 0 matches in app logs
+pattern otpauth: 0 matches in app logs
+pattern Bearer/cookie value: 0 matches in app logs
+postgres log lines: 67; secrets found in postgres log: none
+postgres log email matches: 0

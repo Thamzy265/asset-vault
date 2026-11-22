@@ -1,6 +1,16 @@
-import { closeDatabase, log, openDatabase, recordHeartbeat, runAuditRetention, waitForDatabaseReady, type WaitOptions } from "@vault/db";
+import {
+  closeDatabase,
+  deleteExpiredAuthRows,
+  log,
+  openDatabase,
+  recordHeartbeat,
+  runAuditRetention,
+  waitForDatabaseReady,
+  type WaitOptions,
+} from "@vault/db";
 import { PgBoss, type ConstructorOptions } from "pg-boss";
 import { AUDIT_RETENTION_CRON, AUDIT_RETENTION_QUEUE, runAuditRetentionJob } from "./audit-retention-job.ts";
+import { AUTH_CLEANUP_CRON, AUTH_CLEANUP_QUEUE, runAuthCleanupJob } from "./auth-cleanup-job.ts";
 import { HEARTBEAT_CRON, HEARTBEAT_QUEUE, runHeartbeat } from "./heartbeat-job.ts";
 
 /**
@@ -30,7 +40,7 @@ export type RunningWorker = {
 
 /**
  * Waits for Postgres (backoff, ~60 s), starts pg-boss and schedules the
- * heartbeat and the nightly audit retention. It does not migrate: the one-shot
+ * heartbeat, the nightly audit retention and the auth cleanup (every 15 min). It does not migrate: the one-shot
  * `migrate` Compose service does, before the worker starts (review L7).
  * Throws DatabaseUnavailableError if Postgres never answers, or at once if it
  * refuses the credentials or database name, so main() can exit non-zero.
@@ -75,7 +85,15 @@ export async function startWorker(options: WorkerOptions): Promise<RunningWorker
       log: (msg, fields) => log("info", msg, fields),
     });
   });
-  log("info", "worker started", { queues: [HEARTBEAT_QUEUE, AUDIT_RETENTION_QUEUE] });
+  await boss.createQueue(AUTH_CLEANUP_QUEUE);
+  await boss.schedule(AUTH_CLEANUP_QUEUE, AUTH_CLEANUP_CRON);
+  await boss.work(AUTH_CLEANUP_QUEUE, async () => {
+    await runAuthCleanupJob({
+      clean: () => deleteExpiredAuthRows(db),
+      log: (msg, fields) => log("info", msg, fields),
+    });
+  });
+  log("info", "worker started", { queues: [HEARTBEAT_QUEUE, AUDIT_RETENTION_QUEUE, AUTH_CLEANUP_QUEUE] });
 
   return {
     boss,

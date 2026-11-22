@@ -9,7 +9,9 @@ import { freshDatabase } from "./support/fresh-database.ts";
 // M1.2 data model: constraints live in Postgres, not only in app code.
 // SQLSTATEs: 23502 not null, 23503 foreign key, 23001 restrict (ON DELETE RESTRICT), 23505 unique,
 // 23514 check, 42501 append-only guard.
-const SYSTEM_TABLES = ["_meta", "audit_log", "users"];
+// Auth tables (M1.3) are the sign-in library's, not business records: no owner or visibility.
+const AUTH_TABLES = ["auth_accounts", "auth_sessions", "auth_setup_tokens", "auth_sign_in_failures", "auth_two_factors", "auth_users", "auth_verifications"];
+const SYSTEM_TABLES = ["_meta", "audit_log", "users", ...AUTH_TABLES];
 
 let db: Kysely<Database>;
 let drop: () => Promise<void>;

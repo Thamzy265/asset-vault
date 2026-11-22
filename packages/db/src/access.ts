@@ -1,19 +1,10 @@
 import { sql, type Kysely, type RawBuilder, type Transaction } from "kysely";
 import { z } from "zod";
 import { errorCode, log as defaultLog, type LogLevel } from "./log.ts";
-import type { AuditAction, Database, RecordColumns, Role } from "./schema.ts";
+import type { AuditAction, Database, RecordColumns } from "./schema.ts";
+import { isMintedViewer, type Viewer } from "./viewer.ts";
 
-/**
- * Who is asking. Built from the signed-in session (M1.3). Every repository
- * function takes one; there is no way to read or write a business table
- * without it.
- */
-export type Viewer = {
-  userId: string;
-  role: Role;
-  /** The person this login is linked to, if any. */
-  personId: string | null;
-};
+export type { Viewer } from "./viewer.ts";
 
 /** The record does not exist, or the viewer may not see it. The two are never told apart. */
 export class NotFoundError extends Error {
@@ -77,8 +68,13 @@ declare const parsed: unique symbol;
  */
 export type CheckedViewer = Viewer & { readonly [parsed]: true };
 
-/** Throws on a malformed viewer (e.g. an unknown role) rather than guessing what it may see. */
+/**
+ * Throws unless the viewer came from mintViewer (the session module, M1.3 item
+ * a), and on a malformed one (e.g. an unknown role) rather than guessing what
+ * it may see.
+ */
 export function checkViewer(viewer: Viewer): CheckedViewer {
+  if (!isMintedViewer(viewer)) throw new TypeError("Invalid viewer");
   const result = viewerSchema.safeParse(viewer);
   if (!result.success) throw new TypeError("Invalid viewer");
   return result.data as CheckedViewer;

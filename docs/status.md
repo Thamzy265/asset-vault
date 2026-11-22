@@ -2,6 +2,91 @@
 
 Newest entry first. Plans and designs live in their own files; this log records events.
 
+## 2026-11-22 — M1.3 Sign-in with mandatory 2FA — QA pass, merged to main
+
+- Changed: QA passed 3/3 criteria (all automated) on throwaway stack `qa-m13`: admin and member created with `pnpm user:create` and set up in a real browser; signed-out API 401, password-only 403 `2fa_required`, old sessions 401 at once after sign-out-everywhere, re-issue and deactivation; all seven auth event types in the audit log, `ip_prefix` only on the four allowed events. `pnpm check` 976 pass, e2e 109 pass, deps:audit clean. Accessibility pass (keyboard-only, 320 px, 200% zoom, dark mode, hover, axe 0 violations in 5 runs). Privacy pass (no secrets in any log; no enumeration). Evidence: `docs/qa/M1.md` (M1.3 section), `docs/qa/M1/screens/3-*`; video `qa-artifacts/m1/M1.3-setup-signin-signout.webm`.
+- Lead decision on QA's spec gap: a refused attempt (429, "Too many tries") is not written to the audit log — anyone could otherwise fill the log at will; the failures that led to the lockout are already audited. Later line added.
+- Not observed: real phone authenticator (PM check, steps in `docs/qa/M1.md#pm-check`), live screen reader, Safari/Firefox, real Cloudflare client IPs (M1.4), waiting out session timeouts.
+- Merged: `git merge --no-ff feat/m1-3-sign-in` into `main` (local; not pushed — waiting for the PM's answer on pushing). Plan box M1.3 ticked.
+- Gates: developer pass · tester pass · reviewer approve · QA pass · merge done
+- Open findings: none. M1.2 cleanup C3 still waiting.
+- Needs PM: phone authenticator check (~10 min); decision 2 (per-account lock keyed by email only); push to GitHub.
+- Blockers: Developer none · Tester none · Reviewer none · QA none · Marketer none · Lead none
+
+## 2026-11-22 — M1.3 Sign-in with mandatory 2FA — reviewer: approve, to QA
+
+- Changed: reviewer re-checked b70c3d4: all S1–S6, C1, C2 fixed and confirmed against the old code (8 regression tests fail on d2f80e3) and by re-running the probes (30 parallel wrong passwords → 5 checked, 25 refused; setup race never signs the resumer in; sign-out with the database down → 500, session kept; every `/_next/image` spelling 404). `pnpm check` 976 pass; deps:audit clean. Later lines accepted. No new findings.
+- Gates: developer pass · tester pass · reviewer approve · QA open · merge waiting
+- Open findings: none
+- Blockers: Developer none · Tester none · Reviewer none · QA none · Marketer none · Lead none
+
+## 2026-11-22 — M1.3 Sign-in with mandatory 2FA — reviewer findings fixed, to reviewer re-check
+
+- Changed: S1–S6, C1, C2 fixed, each with a regression test shown failing on the old code first. Password limits now hold under parallel requests (30 parallel wrong passwords → at most 5 checked); setup resume can't race confirm; sign-out errors are 500 and the session survives; non-origin-form requests 400 and every `/_next/image` spelling 404; the gate stops the process at start if it isn't in place; auth bodies cut at 8 KB while streaming; re-issue writes an audit row; code step shows the generic error on server errors; no auth singleton on globalThis. Cleanups done except resolving the session once per request (kept: a Viewer can only be minted inside the route that uses it). `pnpm check` green twice (976 tests); e2e 109 passed; deps:audit clean.
+- Side effect accepted as negligible: 6+ simultaneous correct sign-ins for one email could get a 429.
+- Gates: developer pass · tester pass · reviewer re-check open · QA open · merge waiting
+- Open findings: S1–S6, C1, C2 fixed, awaiting re-check
+- Blockers: Developer none · Tester none · Reviewer none · QA none · Marketer none · Lead: disk space (PM's call)
+
+## 2026-11-22 — Public repository created (PM request)
+
+- Changed: PM asked to "keep going and create a public repo". Created https://github.com/Thamzy265/asset-vault (public) and pushed `main` only (M1.1 + M1.2, 9a4f012). Checked first: no `.env` ever committed (only `.env.example`, empty values), no keys, no real family names, addresses or policy numbers; commit author email is the PM's GitHub email. The M1.3 branch is not pushed — it has open security findings until the reviewer re-check passes.
+- PM's "keep going" renews the go-ahead for the M1.3 gate loop; the earlier limits stand (no skipped gates, no risk acceptance, D6/D8/D11 and lawful basis stay with the PM).
+- Gates (M1.3): developer open (S1–S6, C1–C2) · tester pass · reviewer block · QA open · merge waiting
+
+## 2026-11-22 — M1.3 Sign-in with mandatory 2FA — reviewer: block, back to developer
+
+- Changed: reviewer ran `pnpm check` (939 pass) and deps:audit (clean); probed the running code. Default deny, CSP, carried items (a)–(h), migrations and privacy all pass.
+- Findings: S1 (Medium) the password rate limit can be beaten with parallel requests — 30 parallel wrong passwords, none refused · S2 (Low) setup resume racing confirm can mint a full session without passing TOTP and lock the owner out · S3 (Low) "sign out of all devices" reports success while the database is down · S4 (Low) two request spellings slip past the `/_next/image` 404 · S5 (Low) a chunked auth body is read in full before the 8 KB limit · S6 (Low) re-issuing a setup link writes no audit row · C1 (Low) code step shows "code not right" on server errors · C2 (Low, dev only) viewer set split across bundles. Plus three small cleanups.
+- Lead decision: fix all of them now (deferring any would be accepting a risk, which is the PM's call). Two Later lines in the plan rewritten to the required format (reason segment added; measurable trigger only).
+- Gates: developer open (S1–S6, C1–C2) · tester pass · reviewer block · QA open · merge waiting (standing approval)
+- Open findings: S1 Medium; S2–S6, C1, C2 Low
+- Blockers: Developer none · Tester none · Reviewer none · QA none · Marketer none · Lead: disk space (PM's call)
+
+## 2026-11-22 — M1.3 Sign-in with mandatory 2FA — fixes done, to reviewer
+
+- Changed: 11 commits after b1cfce9 fix T1–T8 and apply lead decisions 1, 3, 5, 7. Used TOTP codes refused for 3 min (race-safe); auth library limit raised so it never refuses a password our rule accepts; failed sign-out stays on the page with a message; no silent password cut; setup link survives a dropped connection; deactivation clears open challenges; unused methods get 405 and `/_next/image` 404 from a small gate in front of Next; re-issue ends sessions at once; password alone never resumes setup (link lives until 2FA is confirmed); gate decodes and normalises paths. `pnpm check` green twice (939 tests); e2e 107 passed incl. destructive; deps:audit clean.
+- Tester tests changed only where a lead decision changed the behaviour (re-issue, link life, resume); listed in the hand-off.
+- For the reviewer: the 405/404 gate patches Node's HTTP server via `node --import` (re-run T7 e2e on Next upgrades); a re-issue writes no audit row; advisory lock used instead of a new UPDATE grant.
+- Gates: developer pass · tester pass (bugs fixed) · reviewer open · QA open · merge waiting (standing approval)
+- Open findings: none open from tester
+- Blockers: Developer none · Tester none · Reviewer none · QA none · Marketer none · Lead: disk space (PM's call)
+
+## 2026-11-22 — M1.3 Sign-in with mandatory 2FA — tester report, back to developer
+
+- Changed: tester added 109 unit/DB tests and 52 browser tests (5 commits, b1cfce9 last), each shown to catch a deliberate break. Default deny held against every path trick, verb, header and server-action probe. vitest 875 pass / 4 fail; e2e 98 pass / 6 fail — the failures are the bugs below.
+- Bugs: T1 (Medium) a 6-digit code works twice in its 30 s window · T2 (Medium) a long emoji password passes our rule but the auth library refuses it after the link is used, so the person is stuck · T3 (Medium, UI) a failed sign-out goes back Home with no message while the session stays alive · T4 (Low-Medium, UI) pasted passwords over 128 are silently cut; wrong error text · T5 (Low-Medium, UI) a dropped connection on first load of the setup link makes a valid link look expired · T6 (Low) deactivation leaves an open sign-in challenge for up to 15 min · T7 (Low) TRACE gives a 500 with a stack trace in the log · T8 (Low) unused image optimizer answers 500 anonymously.
+- Lead decisions on the tester's questions (design note "Lead decisions after the tester round", UI spec updated): re-issuing a setup link ends sessions at once; a TOTP code is single-use; password alone never resumes setup (link stays valid until 2FA is confirmed); whitespace-only and one-repeated-character passwords refused; gate decodes the path before matching; 405 for unsupported methods; image optimizer off; backup codes shown once is intended.
+- Needs PM: per-account lock (5 tries / 15 min) lets anyone who knows an email pause that person's sign-in for 15 minutes — kept as designed, PM may choose email + IP prefix after M1.4.
+- Gaps for QA: hover states, setup step 3 copy/download offline, Safari cookies on http, real authenticator app (PM check).
+- Gates: developer open (T1–T8 + decisions) · tester pass with bugs · reviewer open · QA open · merge waiting (standing approval)
+- Open findings: T1–T8
+- Blockers: Developer none · Tester none · Reviewer none · QA none · Marketer none · Lead: disk space (PM's call)
+
+## 2026-11-21 — M1.3 Sign-in with mandatory 2FA — developer hand-off, to tester
+
+- Changed: branch `feat/m1-3-sign-in`, 14 commits. Better Auth 1.7.27 (pinned) with our own migrations 0005–0007 (C1 fix, revoke DELETE on users, auth tables with cascades); only the needed auth steps mounted (no sign-up); rate limits; scrypt + common-password list; encrypted TOTP secret; hashed backup codes; sessions 24 h idle / 7 days; deactivated users refused on every request; branded Viewer (type, lint, run time); default-deny gate on `/api/v1`; nonce CSP, nosniff, referrer policy; request logs without personal data; `/api/v1/me`; all screens per the UI spec; `user:create` / `user:deactivate` commands. `pnpm check` 3/3 green (770 tests); `pnpm test:e2e` 55 passed twice (including axe WCAG 2.2 AA on every screen, 320 px, keyboard + paste). deps:audit clean.
+- Process note: the default-deny gate and the screens were not built test-first (tests written alongside); the developer mutation-checked the gate test. The tester's independent tests cover this gate.
+- Deviations accepted by the lead and written into the design note ("As built"): `auth_users` extension table; deactivation deletes email and name; `auth_sign_in_failures` (15 min); no IP on sessions; nonce CSP; 401 instead of 404 for signed-out unknown API paths. M1.4 acceptance now includes the trusted client-IP header (shared rate-limit budget until then). Two Later lines added.
+- Not verified by the team: real screen reader, real phone authenticator apps, dark mode axe run — QA to cover what it can; the phone authenticator is a PM check.
+- Disk: about 21 GB free (was 30 GB at the start of the day).
+- Gates: developer pass · tester open · reviewer open · QA open · merge waiting (standing approval)
+- Blockers: Developer none · Tester none · Reviewer none · QA none · Marketer none · Lead: disk space falling (PM's call)
+
+## 2026-11-21 — M1.3 Sign-in with mandatory 2FA — spec gap answered
+
+- Changed: developer paused the screens over 10 missing pieces of copy in the UI spec (labels, backup-code screen, expired-link screen, error summary heading, copy confirmation, step count "of 3" vs "of 4", backup-codes-left notice, password-only session, rate-limit wording). Lead answered all 10 and added them to `docs/ui/m1-3-sign-in.md` ("Added 2026-11-21"). The backend, default-deny, headers, request logs and /me continued meanwhile.
+- Lesson: the UI spec template's Copy section must list every label, help text and button per screen before briefing.
+- Gates: developer open · tester open · reviewer open · QA open · merge waiting (standing approval)
+- Blockers: Developer none (cleared) · Tester none · Reviewer none · QA none · Marketer none · Lead: disk 97% full (PM's call)
+
+## 2026-11-21 — M1.3 Sign-in with mandatory 2FA — developer briefed
+
+- Changed: developer briefed on `feat/m1-3-sign-in` from main 9a4f012. Size: large (auth, trust boundary, personal data). Started on Opus: auth and personal data across web, db and worker. Brief includes the M1.2 carry-overs (a)–(h), security headers (L6), request logs, axe checks, the fail-safe handle switch and C1.
+- Design approval: deck `docs/slides/m1-data-and-sign-in.html` not PM-approved; proceeding under the standing approval.
+- Gates: developer open · tester open · reviewer open · QA open · merge waiting (standing approval)
+- Blockers: Developer none · Tester none · Reviewer none · QA none · Marketer none · Lead: disk 97% full (PM's call)
+
 ## 2026-11-21 — M1.2 Data model foundation — QA pass, merged to main
 
 - Changed: QA passed 7/7 criteria (all automated) on throwaway stack `qa-m12`: `pnpm check` 600 pass, e2e 38 pass, deps:audit clean; live repository script 33/33 (private records hidden, write rules hold); as `vault_app`, every audit-log tamper route refused; a failed audit insert leaves no person row; retention removed old rows and cleared old IP prefixes. Evidence: `docs/qa/M1.md` (M1.2 section), `docs/qa/M1/screens/2-*` (12 files). No video — no user-visible flow. Accessibility n/a (no UI change). Privacy pass.

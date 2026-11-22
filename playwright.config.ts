@@ -5,6 +5,7 @@ const port = process.env.WEB_PORT ?? "3000";
 
 export default defineConfig({
   testDir: "e2e",
+  globalSetup: "./e2e/global-setup.ts",
   outputDir: "qa-artifacts/playwright",
   reporter: [["list"]],
   use: {

@@ -12,3 +12,9 @@ export { peopleRepository, type NewPerson, type PeopleRepository, type Person, t
 export { errorCode, errorFields, log, type LogLevel } from "./log.ts";
 export { waitForDatabaseReady, type DatabaseReadyOptions } from "./database-ready.ts";
 export { DatabaseUnavailableError, waitForDatabase, type RetryInfo, type WaitOptions } from "./wait-for-database.ts";
+// Sign-in (M1.3). The session check in createAuthService().session() is the only
+// place a Viewer is created (auth/session.ts); mintViewer itself is not exported.
+export { loadAuthConfig, type AuthConfig } from "./auth/config.ts";
+export { createAuthService, type AuthService, type AuthServiceOptions } from "./auth/service.ts";
+export type { SessionState, SessionUser } from "./auth/session.ts";
+export { deleteExpiredAuthRows, type AuthCleanupResult } from "./auth/cleanup.ts";
