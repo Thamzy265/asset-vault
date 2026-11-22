@@ -62,19 +62,24 @@ test("a deactivated person is refused on the next call with an old cookie, and w
   expect((await again.post("/api/auth/sign-in", { email: account.email, password: PASSWORD })).status).toBe(401);
 });
 
-test("using a re-issued setup link signs the person out everywhere and replaces the password and authenticator; the old link and old codes are dead", async () => {
+test("re-issuing a setup link signs the person out everywhere at once and clears the authenticator; using the new link replaces the password; the old link and old codes are dead", async () => {
   const account = await enrolledAccount("Lost Phone");
   const stolen = account.client.cookieHeader();
+  expect((await me(stolen)).status).toBe(200);
   const { setupPath } = await issueLink(account.email, "Lost Phone");
   const token = setupPath.split("#")[1]!;
-  expect((await me(stolen)).status, "until the new link is used the old session lives (spec question)").toBe(200);
+  expect((await me(stolen)).status, "the old device is locked out at once, before the new link is used").toBe(401);
   expect((await account.client.post("/api/auth/setup/check", { token: account.setupToken })).status, "the first link is dead").toBe(410);
+  const noSecret = await new Client().post("/api/auth/sign-in", { email: account.email, password: PASSWORD });
+  expect(noSecret.status, "the old password alone gets no session and no secret").toBe(403);
+  expect((noSecret.body.error as { code: string }).code).toBe("setup_unfinished");
+  expect(noSecret.text).not.toMatch(/otpauth|secret/i);
 
   const fresh = new Client();
   const newPassword = "a different long password 123";
   expect((await fresh.post("/api/auth/setup/password", { token, password: newPassword })).status).toBe(200);
-  expect((await me(stolen)).status, "the old session ends when the new link is used").toBe(401);
-  expect((await new Client().post("/api/auth/setup/check", { token })).status, "and the new link is single use").toBe(410);
+  expect((await me(stolen)).status).toBe(401);
+  expect((await new Client().post("/api/auth/setup/check", { token })).body, "the new link lives until enrolment is confirmed").toEqual({ valid: true, step: 2 });
   const old = new Client();
   expect((await old.post("/api/auth/sign-in", { email: account.email, password: PASSWORD })).status, "the old password no longer works").toBe(401);
 });

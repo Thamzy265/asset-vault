@@ -147,7 +147,7 @@ test("daily sign-in with a code, sign out, then a backup code with the codes-lef
   await expect(code).toHaveAttribute("inputmode", "numeric");
   await expect(code).toHaveAttribute("autocomplete", "one-time-code");
   await axe(page, "code");
-  await code.fill(totpCode(key));
+  await code.fill(totpCode(key, Date.now(), 1)); // the current step was used by setup (a code works once)
   await page.getByRole("button", { name: "Verify" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Welcome, Bea Example" })).toBeVisible();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
@@ -168,7 +168,7 @@ test("daily sign-in with a code, sign out, then a backup code with the codes-lef
   const other = await browser.newContext();
   const otherPage = await other.newPage();
   await signIn(otherPage, email);
-  await otherPage.getByLabel("6-digit code").fill(totpCode(key));
+  await otherPage.getByLabel("6-digit code").fill(totpCode(key, Date.now(), -1)); // the other two steps were used already (a code works once)
   await otherPage.getByRole("button", { name: "Verify" }).click();
   await expect(otherPage.getByRole("heading", { level: 1, name: "Welcome, Bea Example" })).toBeVisible();
   await page.getByRole("button", { name: "Sign out of all devices" }).click();
@@ -278,7 +278,7 @@ test("keyboard only, and pasting a code works (WCAG 3.3.8)", async ({ page, cont
   await page.keyboard.press("Enter");
   await expect(page.getByRole("heading", { level: 1, name: "Enter your code" })).toBeFocused();
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await page.evaluate((c) => navigator.clipboard.writeText(c), totpCode(key));
+  await page.evaluate((c) => navigator.clipboard.writeText(c), totpCode(key, Date.now(), 1)); // the current step was used by setup (a code works once)
   await page.keyboard.press("Tab");
   await expect(page.getByLabel("6-digit code")).toBeFocused();
   await page.keyboard.press("ControlOrMeta+V");

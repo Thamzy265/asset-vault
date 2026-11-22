@@ -577,6 +577,7 @@ test("if the setup link can't be checked because the connection drops on first l
 
   // The same, with a reload instead of the button.
   failures = 1;
+  await page.goto("/sign-in"); // leave the page, so that opening the link again is a new load and not a hash change
   await page.goto(setupPath);
   await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
   await page.reload();
