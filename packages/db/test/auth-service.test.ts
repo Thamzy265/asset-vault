@@ -99,19 +99,81 @@ describe("first-time setup via the setup link", () => {
     expect(actions).toEqual(["password_changed", "2fa_enrolled", "sign_in"]);
   });
 
-  it("the link is single use: after the password is set it is refused, and so is a made-up or expired one", async () => {
+  it("the link is used up when 2FA enrolment is confirmed, not at the password step; a made-up or expired link never works", async () => {
     const created = await createLogin(app, { email: email(), name: "Bo", role: "member" });
     const b = browser();
-    expect((await b.post("/api/auth/setup/password", { token: created.setupToken, password: PASSWORD })).status).toBe(200);
+    expect((await b.post("/api/auth/setup/check", { token: created.setupToken })).body).toEqual({ valid: true, step: 1 });
+    const first = await b.post("/api/auth/setup/password", { token: created.setupToken, password: PASSWORD });
+    expect(first.status).toBe(200);
+    // Password set, authenticator not confirmed: the link still opens, at step 2, and cannot set a second password.
+    expect((await browser().post("/api/auth/setup/check", { token: created.setupToken })).body).toEqual({ valid: true, step: 2 });
+    const second = await browser().post("/api/auth/setup/password", { token: created.setupToken, password: "another long passphrase" });
+    expect(second.status).toBe(410);
+    expect(second.response.headers.getSetCookie()).toEqual([]);
+    // Confirming enrolment uses it up.
+    const secret = (first.body.enrolment as Enrolment).secret;
+    expect((await b.post("/api/auth/setup/confirm", { code: totpCode(secret) })).status).toBe(200);
     for (const token of [created.setupToken, "made-up-token", ""]) {
       const res = await browser().post("/api/auth/setup/check", { token });
       expect(res.status, token).toBe(410);
       expect(res.body).toEqual({ error: { code: "link_invalid", message: expect.any(String) } });
       expect((await browser().post("/api/auth/setup/password", { token, password: PASSWORD })).status, token).toBe(410);
+      expect((await browser().post("/api/auth/setup/resume", { token })).status, token).toBe(410);
     }
     const expired = await createLogin(app, { email: email(), name: "Cy", role: "member" });
     await migrator.updateTable("auth_setup_tokens").set({ expires_at: new Date(Date.now() - 1000) }).where("user_id", "=", expired.userId).execute();
     expect((await browser().post("/api/auth/setup/check", { token: expired.setupToken })).status).toBe(410);
+  });
+
+  it("opening the link again after step 1 resumes at step 2 with the password kept: a new secret, backup codes and session, the old ones replaced", async () => {
+    const address = email();
+    const created = await createLogin(app, { email: address, name: "Re", role: "member" });
+    const first = browser();
+    const step1 = await first.post("/api/auth/setup/password", { token: created.setupToken, password: PASSWORD });
+    const oldSecret = (step1.body.enrolment as Enrolment).secret;
+    const again = browser();
+    const resumed = await again.post("/api/auth/setup/resume", { token: created.setupToken });
+    expect(resumed.status, JSON.stringify(resumed.body)).toBe(200);
+    const enrolment = resumed.body.enrolment as Enrolment;
+    expect(enrolment.secret).not.toBe(oldSecret);
+    expect(enrolment.backupCodes).toHaveLength(10);
+    expect(new URL(enrolment.totpUri).searchParams.get("secret")).toBe(enrolment.secret);
+    expect((await auth.session(again.headers())).status).toBe("two-factor-required");
+    expect((await auth.session(first.headers())).status).toBe("signed-out"); // the earlier password-only session is gone
+    expect((await first.post("/api/auth/setup/confirm", { code: totpCode(oldSecret) })).status).toBe(401);
+    expect((await again.post("/api/auth/setup/confirm", { code: totpCode(enrolment.secret) })).status).toBe(200);
+    // The password set at step 1 is the one that works, with the new authenticator.
+    const b = browser();
+    expect((await b.post("/api/auth/sign-in", { email: address, password: PASSWORD })).body).toEqual({ next: "code" });
+    expect((await b.post("/api/auth/two-factor/totp", { code: totpCode(enrolment.secret, Date.now(), 1) })).status).toBe(200);
+  });
+
+  it("resume refuses a link whose password step was never done, and a made-up link", async () => {
+    const created = await createLogin(app, { email: email(), name: "Early", role: "member" });
+    const b = browser();
+    const res = await b.post("/api/auth/setup/resume", { token: created.setupToken });
+    expect(res.status).toBe(400);
+    expect(b.cookies.size).toBe(0);
+    expect((await b.post("/api/auth/setup/resume", { token: "x".repeat(43) })).status).toBe(410);
+    expect((await b.post("/api/auth/setup/resume", {})).status).toBe(400);
+  });
+
+  it("the password alone never resumes setup or hands out a secret: it gets the 'setup isn't finished' answer, no cookie, no session", async () => {
+    const address = email();
+    const created = await createLogin(app, { email: address, name: "Half", role: "member" });
+    await browser().post("/api/auth/setup/password", { token: created.setupToken, password: PASSWORD });
+    await migrator.deleteFrom("auth_sessions").where("user_id", "=", created.userId).execute();
+    const b = browser();
+    const res = await b.post("/api/auth/sign-in", { email: address, password: PASSWORD });
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: { code: "setup_unfinished", message: "Your account setup isn't finished. Open your setup link again, or ask your admin for a new one." } });
+    expect(JSON.stringify(res.body)).not.toMatch(/otpauth|secret|backup/i);
+    expect(res.response.headers.getSetCookie()).toEqual([]);
+    expect(await migrator.selectFrom("auth_sessions").select("id").where("user_id", "=", created.userId).execute()).toEqual([]);
+    // It is still a right password, so it does not count as a failure.
+    expect(await migrator.selectFrom("auth_sign_in_failures").select("id").execute()).toEqual([]);
+    // The link still works.
+    expect((await browser().post("/api/auth/setup/check", { token: created.setupToken })).body).toEqual({ valid: true, step: 2 });
   });
 
   it("only the hash of the setup token is stored, and it expires 24 h after it was issued", async () => {
@@ -152,31 +214,52 @@ describe("first-time setup via the setup link", () => {
   it("confirming enrolment ends every other session of that user (a password-only session can't ride along)", async () => {
     const created = await createLogin(app, { email: email(), name: "Gus", role: "member" });
     const setupBrowser = browser();
-    const setup = await setupBrowser.post("/api/auth/setup/password", { token: created.setupToken, password: PASSWORD });
+    await setupBrowser.post("/api/auth/setup/password", { token: created.setupToken, password: PASSWORD });
+    // A second device opens the same link: it resumes at step 2 with a new secret (and ends the first password-only session).
     const other = browser();
-    const otherSignIn = await other.post("/api/auth/sign-in", { email: (await migrator.selectFrom("auth_users").select("email").where("id", "=", created.userId).executeTakeFirstOrThrow()).email, password: PASSWORD });
-    expect(otherSignIn.body.next).toBe("setup");
+    const resumed = await other.post("/api/auth/setup/resume", { token: created.setupToken });
     expect((await auth.session(other.headers())).status).toBe("two-factor-required");
-    // The other browser's enrolment replaced the secret: confirm with the newest one.
-    const secret = (otherSignIn.body.enrolment as Enrolment).secret;
-    expect((setup.body.enrolment as Enrolment).secret).not.toBe(secret);
-    expect((await setupBrowser.post("/api/auth/setup/confirm", { code: totpCode(secret) })).status).toBe(200);
-    expect((await auth.session(setupBrowser.headers())).status).toBe("signed-in");
+    const secret = (resumed.body.enrolment as Enrolment).secret;
+    // A third password-only session appears (the first device opens the link again) and is ended by the confirm.
+    const third = browser();
+    const thirdSecret = ((await third.post("/api/auth/setup/resume", { token: created.setupToken })).body.enrolment as Enrolment).secret;
+    expect(thirdSecret).not.toBe(secret);
     expect((await auth.session(other.headers())).status).toBe("signed-out");
+    expect((await third.post("/api/auth/setup/confirm", { code: totpCode(thirdSecret) })).status).toBe(200);
+    expect((await auth.session(third.headers())).status).toBe("signed-in");
+    expect(await migrator.selectFrom("auth_sessions").select("id").where("user_id", "=", created.userId).execute()).toHaveLength(1);
   });
 
-  it("a re-issued setup link revokes the old one, and using it resets the password, 2FA and every session", async () => {
+  it("re-issuing a setup link ends every session at once and clears the old 2FA and backup codes; the old link is dead", async () => {
     const user = await enrolledUser();
+    const second = browser();
+    await second.post("/api/auth/sign-in", { email: user.email, password: PASSWORD });
+    await second.post("/api/auth/two-factor/totp", { code: totpCode(user.secret, Date.now(), 1) });
+    const midFlight = browser();
+    await midFlight.post("/api/auth/sign-in", { email: user.email, password: PASSWORD }); // a sign-in challenge in flight
+    expect((await auth.session(user.browser.headers())).status).toBe("signed-in");
+
     const again = await createLogin(app, { email: user.email, name: "Test Person", role: "member" });
     expect(again.reissued).toBe(true);
     expect(again.userId).toBe(user.userId);
     expect((await migrator.selectFrom("auth_setup_tokens").select("id").where("user_id", "=", user.userId).execute()).length).toBe(1);
-    expect((await auth.session(user.browser.headers())).status).toBe("signed-in");
+
+    // Before the new link is used: every device is signed out, 2FA and backup codes are gone, the challenge is dead.
+    expect((await auth.session(user.browser.headers())).status).toBe("signed-out");
+    expect((await auth.session(second.headers())).status).toBe("signed-out");
+    expect(await migrator.selectFrom("auth_sessions").select("id").where("user_id", "=", user.userId).execute()).toEqual([]);
+    expect(await migrator.selectFrom("auth_two_factors").select("id").where("user_id", "=", user.userId).execute()).toEqual([]);
+    expect((await migrator.selectFrom("auth_users").select("two_factor_enabled").where("id", "=", user.userId).executeTakeFirstOrThrow()).two_factor_enabled).toBe(false);
+    expect(await migrator.selectFrom("auth_verifications").select("identifier").where("value", "=", user.userId).execute()).toEqual([]);
+    expect((await midFlight.post("/api/auth/two-factor/totp", { code: totpCode(user.secret, Date.now(), -1) })).status).toBe(401);
+    // The old password gets no session and no secret: setup isn't finished.
+    const old = await browser().post("/api/auth/sign-in", { email: user.email, password: PASSWORD });
+    expect(old.status).toBe(403);
+    expect((old.body.error as { code: string }).code).toBe("setup_unfinished");
+
+    // Using the new link sets a new password.
     const b = browser();
     expect((await b.post("/api/auth/setup/password", { token: again.setupToken, password: "a brand new passphrase" })).status).toBe(200);
-    expect((await auth.session(user.browser.headers())).status).toBe("signed-out");
-    const tf = await migrator.selectFrom("auth_users").select("two_factor_enabled").where("id", "=", user.userId).executeTakeFirstOrThrow();
-    expect(tf.two_factor_enabled).toBe(false);
     expect((await browser().post("/api/auth/sign-in", { email: user.email, password: PASSWORD })).status).toBe(401);
   });
 });

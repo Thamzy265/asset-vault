@@ -30,8 +30,9 @@ const emailSchema = z.email().max(254);
 /**
  * Creates a login (and, unless personId names an existing person, a person
  * with the same name) and issues a setup link valid for 24 h. For an email
- * that already has an active login it only issues a new link, revoking the
- * old one; using it resets the password, 2FA and sessions (lost phone).
+ * that already has an active login it issues a new link, revoking the old
+ * one, and at once ends every session, the 2FA enrolment and the backup codes
+ * (lost phone); using the link then sets a new password.
  * Audited as create (user, person) with no actor: the server admin.
  */
 export async function createLogin(handle: DbLike, input: NewLogin): Promise<CreatedLogin> {
@@ -55,6 +56,11 @@ export async function createLogin(handle: DbLike, input: NewLogin): Promise<Crea
       .executeTakeFirst();
     if (existing) {
       if (existing.role !== input.role) throw new LoginConflictError("This email already has a login with another role; nothing was changed.");
+      // Lead decision 1: a lost phone means the old device is locked out now, not when the new link is used.
+      await trx.deleteFrom("auth_sessions").where("user_id", "=", existing.id).execute();
+      await trx.deleteFrom("auth_two_factors").where("user_id", "=", existing.id).execute();
+      await trx.updateTable("auth_users").set({ two_factor_enabled: false, updated_at: sql<Date>`now()` }).where("id", "=", existing.id).execute();
+      await deleteChallenges(trx, existing.id);
       const link = await issueSetupToken(trx, existing.id);
       return { userId: existing.id, personId: existing.person_id!, setupToken: link.token, expiresAt: link.expiresAt, reissued: true };
     }

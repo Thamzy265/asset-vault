@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { betterAuth } from "better-auth";
-import { sql, type Kysely } from "kysely";
+import { generateRandomString, makeSignature, symmetricEncrypt } from "better-auth/crypto";
+import { sql, type Kysely, type Transaction } from "kysely";
 import { z } from "zod";
 import { defaultRepositoryLog, type LogFn } from "../access.ts";
 import { kyselyOf, type DbLike } from "../handle.ts";
@@ -9,11 +10,11 @@ import type { Database } from "../schema.ts";
 import type { AuthConfig } from "./config.ts";
 import { auditAuthEvent } from "./events.ts";
 import { clientIpPrefix } from "./ip.ts";
-import { authOptions, hashBackupCode } from "./options.ts";
+import { APP_NAME, authOptions, BACKUP_CODE_COUNT, hashBackupCode } from "./options.ts";
 import { passwordProblem } from "./passwords.ts";
 import { accountKey, checkSignInLimit, ipKey, normaliseEmail, recordSignInFailure, retryMessage } from "./rate-limit.ts";
 import { cookieValue, resolveSession, type SessionState } from "./session.ts";
-import { consumeSetupToken, peekSetupToken } from "./setup-tokens.ts";
+import { deleteSetupTokens, lockSetupToken, peekSetupToken } from "./setup-tokens.ts";
 
 /**
  * The sign-in service behind /api/auth/* (design note M1.3). It wraps Better
@@ -23,14 +24,17 @@ import { consumeSetupToken, peekSetupToken } from "./setup-tokens.ts";
  *   POST /api/auth/sign-in                 { email, password }
  *   POST /api/auth/two-factor/totp         { code }
  *   POST /api/auth/two-factor/backup-code  { code }
- *   POST /api/auth/setup/check             { token }
- *   POST /api/auth/setup/password          { token, password }
+ *   POST /api/auth/setup/check             { token }             -> { valid, step: 1 | 2 }
+ *   POST /api/auth/setup/password          { token, password }   (step 1)
+ *   POST /api/auth/setup/resume            { token }             (step 2 again, from the link alone)
  *   POST /api/auth/setup/confirm           { code }
  *   POST /api/auth/sign-out
  *   POST /api/auth/sign-out-everywhere
  *
  * Every endpoint takes a same-origin JSON POST only (CSRF: Origin must be
  * APP_URL). Errors use the API's shape { error: { code, message } }.
+ * The setup link lives until 2FA enrolment is confirmed (24 h from issue) and is used up then
+ * (lead decision 5). A password alone never resumes setup or hands out an authenticator secret.
  * Invariant: a session of a user with 2FA enabled was created by a passed 2FA
  * step (sign-in code, backup code, or confirming enrolment, which ends every
  * other session), so session.ts may treat "2FA enabled" as "2FA passed".
@@ -51,6 +55,7 @@ const MESSAGES = {
   invalid_backup_code: "That backup code is not right or was already used.",
   sign_in_again: "Please sign in again.",
   link_invalid: "This link has expired or was already used. Ask your admin for a new one.",
+  setup_unfinished: "Your account setup isn't finished. Open your setup link again, or ask your admin for a new one.",
   password_too_short: "Use at least 12 characters.",
   password_too_long: "Use at most 128 characters.",
   password_too_common: "This password is too common — choose another.",
@@ -127,23 +132,6 @@ export function createAuthService(handle: DbLike, config: AuthConfig, options: A
     );
   }
 
-  /** The request headers plus the cookies a library response just set (to chain two library calls in one request). */
-  function withCookies(headers: Headers, response: Response): Headers {
-    const next = new Headers(headers);
-    const jar = new Map<string, string>();
-    for (const part of (headers.get("cookie") ?? "").split(";")) {
-      const eq = part.indexOf("=");
-      if (eq > 0) jar.set(part.slice(0, eq).trim(), part.slice(eq + 1).trim());
-    }
-    for (const line of response.headers.getSetCookie()) {
-      const pair = line.split(";")[0]!;
-      const eq = pair.indexOf("=");
-      jar.set(pair.slice(0, eq).trim(), pair.slice(eq + 1).trim());
-    }
-    next.set("cookie", [...jar].map(([k, v]) => `${k}=${v}`).join("; "));
-    return next;
-  }
-
   async function libraryError(response: Response): Promise<string | undefined> {
     const body = (await response.clone().json().catch(() => null)) as { code?: string } | null;
     return body?.code;
@@ -211,12 +199,42 @@ export function createAuthService(handle: DbLike, config: AuthConfig, options: A
     return reply.error(429, "rate_limited", { message: retryMessage(seconds), retryAfterSeconds: seconds }, { "retry-after": String(seconds) });
   }
 
-  async function enrol(headers: Headers, password: string): Promise<{ totpUri: string; secret: string; backupCodes: string[] } | null> {
-    const res = await auth.api.enableTwoFactor({ body: { password }, headers, asResponse: true });
-    if (!res.ok) return null;
-    const body = (await res.json()) as { totpURI: string; backupCodes: string[] };
-    const secret = new URL(body.totpURI).searchParams.get("secret") ?? "";
-    return { totpUri: body.totpURI, secret, backupCodes: body.backupCodes };
+  /**
+   * A new authenticator secret and backup codes for the user, stored unverified (replacing any earlier
+   * ones). Written here rather than through the library's enable call, which asks for the password: the
+   * setup link alone resumes step 2. Format and encryption are the library's, so its TOTP check and the
+   * confirm step work on it unchanged.
+   */
+  async function createEnrolment(trx: Transaction<Database>, userId: string, email: string) {
+    const secret = generateRandomString(32);
+    const backupCodes = Array.from({ length: BACKUP_CODE_COUNT }, () => {
+      const code = generateRandomString(10, "a-z", "0-9", "A-Z");
+      return `${code.slice(0, 5)}-${code.slice(5)}`;
+    });
+    await trx.deleteFrom("auth_two_factors").where("user_id", "=", userId).execute();
+    await trx
+      .insertInto("auth_two_factors")
+      .values({
+        user_id: userId,
+        secret: await symmetricEncrypt({ key: (await context).secretConfig, data: secret }),
+        backup_codes: JSON.stringify(backupCodes.map((code) => hashBackupCode(config.encryptionKey, code))),
+        verified: false,
+      })
+      .execute();
+    const key = base32(Buffer.from(secret, "utf8"));
+    const params = new URLSearchParams({ secret: key, issuer: APP_NAME, digits: "6", period: "30" });
+    const totpUri = `otpauth://totp/${encodeURIComponent(APP_NAME)}:${encodeURIComponent(email)}?${params.toString()}`;
+    return { totpUri, secret: key, backupCodes };
+  }
+
+  /** A password-only session (2FA not enrolled yet: reaches the enrolment screens and nothing else), as the library would set it. */
+  async function openSession(reply: Reply, userId: string): Promise<boolean> {
+    const c = await context;
+    const created = await c.internalAdapter.createSession(userId, false);
+    if (!created) return false;
+    const signed = encodeURIComponent(`${created.token}.${await makeSignature(created.token, c.secret)}`);
+    reply.addCookies([`${c.authCookies.sessionToken.name}=${signed}; Max-Age=${c.sessionConfig.expiresIn}; Path=/; HttpOnly; Secure; SameSite=Lax`]);
+    return true;
   }
 
   // ---- endpoints ----
@@ -242,15 +260,14 @@ export function createAuthService(handle: DbLike, config: AuthConfig, options: A
       await auditAuthEvent(db, log, "sign_in_failed", known?.id ?? null, prefix);
       return reply.error(401, "invalid_credentials");
     }
-    reply.addCookies(res);
-    const result = (await res.json()) as { twoFactorRedirect?: boolean; user?: { id: string } };
-    if (result.twoFactorRedirect) return reply.json(200, { next: "code" });
+    const result = (await res.json()) as { twoFactorRedirect?: boolean };
+    if (result.twoFactorRedirect) return reply.addCookies(res).json(200, { next: "code" });
 
-    // Right password, 2FA not enrolled yet (setup abandoned after the password step):
-    // straight on to the authenticator step, with a fresh secret.
-    const enrolment = await enrol(withCookies(request.headers, res), input.data.password);
-    if (!enrolment) return reply.error(500, "internal_error");
-    return reply.json(200, { next: "setup", enrolment });
+    // Right password, 2FA not enrolled: setup was never finished. The password alone gets no session
+    // and no authenticator secret (lead decision 5); the setup link resumes it.
+    const token = await sessionTokenFrom(res);
+    if (token) await db.deleteFrom("auth_sessions").where("token", "=", token).execute();
+    return reply.error(403, "setup_unfinished");
   }
 
   async function verifyCode(request: Request, body: unknown, kind: "totp" | "backup"): Promise<Response> {
@@ -291,14 +308,24 @@ export function createAuthService(handle: DbLike, config: AuthConfig, options: A
     return reply.addCookies([await twoFactorCookieCleared()]).error(401, "sign_in_again");
   }
 
+  async function setupStep(userId: string): Promise<1 | 2> {
+    const started = await db.selectFrom("auth_two_factors").select("id").where("user_id", "=", userId).executeTakeFirst();
+    return started ? 2 : 1;
+  }
+
   async function setupCheck(body: unknown): Promise<Response> {
     const reply = new Reply();
     const input = tokenBody.safeParse(body);
     if (!input.success) return reply.error(400, "invalid_request");
-    return (await peekSetupToken(db, input.data.token)) ? reply.json(200, { valid: true }) : reply.error(410, "link_invalid");
+    const userId = await peekSetupToken(db, input.data.token);
+    return userId ? reply.json(200, { valid: true, step: await setupStep(userId) }) : reply.error(410, "link_invalid");
   }
 
-  async function setupPassword(request: Request, body: unknown): Promise<Response> {
+  async function emailOfUser(trx: Transaction<Database>, userId: string): Promise<string> {
+    return (await trx.selectFrom("auth_users").select("email").where("id", "=", userId).executeTakeFirstOrThrow()).email;
+  }
+
+  async function setupPassword(body: unknown): Promise<Response> {
     const reply = new Reply();
     const input = setupBody.safeParse(body);
     if (!input.success) return reply.error(400, "invalid_request");
@@ -308,27 +335,40 @@ export function createAuthService(handle: DbLike, config: AuthConfig, options: A
     if (problem) return reply.error(400, problem);
 
     const hash = await (await context).password.hash(password);
-    const userId = await db.transaction().execute(async (trx) => {
-      const id = await consumeSetupToken(trx, token);
-      if (!id) return null;
-      // A new password resets everything that came with the old one: 2FA, backup codes, sessions.
+    const done = await db.transaction().execute(async (trx) => {
+      const id = await lockSetupToken(trx, token);
+      // The password step is done once, per link: after it the link only resumes step 2.
+      if (!id || (await trx.selectFrom("auth_two_factors").select("id").where("user_id", "=", id).executeTakeFirst())) return null;
       await trx.deleteFrom("auth_sessions").where("user_id", "=", id).execute();
-      await trx.deleteFrom("auth_two_factors").where("user_id", "=", id).execute();
       await trx.updateTable("auth_users").set({ two_factor_enabled: false, updated_at: new Date() }).where("id", "=", id).execute();
       await trx.deleteFrom("auth_accounts").where("user_id", "=", id).where("provider_id", "=", "credential").execute();
       await trx.insertInto("auth_accounts").values({ user_id: id, account_id: id, provider_id: "credential", password: hash }).execute();
-      return id;
+      return { id, enrolment: await createEnrolment(trx, id, await emailOfUser(trx, id)) };
     });
-    if (!userId) return reply.error(410, "link_invalid");
-    await auditAuthEvent(db, log, "password_changed", userId, null);
+    if (!done) return reply.error(410, "link_invalid");
+    await auditAuthEvent(db, log, "password_changed", done.id, null);
+    if (!(await openSession(reply, done.id))) return reply.error(500, "internal_error");
+    return reply.json(200, { enrolment: done.enrolment });
+  }
 
-    const user = await db.selectFrom("auth_users").select("email").where("id", "=", userId).executeTakeFirstOrThrow();
-    const res = await auth.api.signInEmail({ body: { email: user.email, password }, headers: request.headers, asResponse: true });
-    if (!res.ok) return reply.error(500, "internal_error");
-    reply.addCookies(res);
-    const enrolment = await enrol(withCookies(request.headers, res), password);
-    if (!enrolment) return reply.error(500, "internal_error");
-    return reply.json(200, { enrolment });
+  /** Step 2 again, from the link alone: a new secret and backup codes, and a fresh password-only session; the password is kept. */
+  async function setupResume(body: unknown): Promise<Response> {
+    const reply = new Reply();
+    const input = tokenBody.safeParse(body);
+    if (!input.success) return reply.error(400, "invalid_request");
+    const token = input.data.token;
+    if (!(await peekSetupToken(db, token))) return reply.error(410, "link_invalid");
+    const done = await db.transaction().execute(async (trx) => {
+      const id = await lockSetupToken(trx, token);
+      if (!id) return "gone" as const;
+      if (!(await trx.selectFrom("auth_two_factors").select("id").where("user_id", "=", id).executeTakeFirst())) return "step1" as const;
+      await trx.deleteFrom("auth_sessions").where("user_id", "=", id).execute();
+      return { id, enrolment: await createEnrolment(trx, id, await emailOfUser(trx, id)) };
+    });
+    if (done === "gone") return reply.error(410, "link_invalid");
+    if (done === "step1") return reply.error(400, "invalid_request");
+    if (!(await openSession(reply, done.id))) return reply.error(500, "internal_error");
+    return reply.json(200, { enrolment: done.enrolment });
   }
 
   async function setupConfirm(request: Request, body: unknown): Promise<Response> {
@@ -355,6 +395,7 @@ export function createAuthService(handle: DbLike, config: AuthConfig, options: A
     // Keep only the session this step just created: no password-only session survives enrolment.
     const token = await sessionTokenFrom(res);
     await db.deleteFrom("auth_sessions").where("user_id", "=", userId).where("token", "!=", token ?? "").execute();
+    await deleteSetupTokens(db, userId); // the link is used up now, not at the password step
     await auditAuthEvent(db, log, "2fa_enrolled", userId, null);
     await auditAuthEvent(db, log, "sign_in", userId, prefix);
     return reply.json(200, { next: "backup-codes" });
@@ -389,7 +430,8 @@ export function createAuthService(handle: DbLike, config: AuthConfig, options: A
     "/api/auth/two-factor/totp": (r, b) => verifyCode(r, b, "totp"),
     "/api/auth/two-factor/backup-code": (r, b) => verifyCode(r, b, "backup"),
     "/api/auth/setup/check": (_r, b) => setupCheck(b),
-    "/api/auth/setup/password": (r, b) => setupPassword(r, b),
+    "/api/auth/setup/password": (_r, b) => setupPassword(b),
+    "/api/auth/setup/resume": (_r, b) => setupResume(b),
     "/api/auth/setup/confirm": (r, b) => setupConfirm(r, b),
     "/api/auth/sign-out": (r) => signOut(r, false),
     "/api/auth/sign-out-everywhere": (r) => signOut(r, true),
@@ -431,4 +473,22 @@ export function createAuthService(handle: DbLike, config: AuthConfig, options: A
     },
     session,
   };
+}
+
+/** RFC 4648 base32 without padding, as authenticator apps expect the key in an otpauth:// link. */
+function base32(bytes: Buffer): string {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = 0;
+  let value = 0;
+  let out = "";
+  for (const byte of bytes) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      out += alphabet[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) out += alphabet[(value << (5 - bits)) & 31];
+  return out;
 }

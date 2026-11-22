@@ -33,7 +33,11 @@ describe("password rules (12 characters, local common-password list)", () => {
     ["password1234", "password_too_common"],
     ["QWERTY123456", "password_too_common"],
     ["correct horse battery", null],
-    ["🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂", null],
+    ["🙂🙃🙂🙃🙂🙃🙂🙃🙂🙃🙂🙃", null],
+    ["🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂", "password_too_common"],
+    ["            ", "password_too_common"],
+    ["aaaaaaaaaaaaaaaa", "password_too_common"],
+    ["aaaaaaaaaaab", null],
   ])("%j -> %s", (password, problem) => {
     expect(passwordProblem(password)).toBe(problem);
   });

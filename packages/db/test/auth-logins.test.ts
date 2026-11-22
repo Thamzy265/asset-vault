@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { sql, type Kysely } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ValidationError } from "../src/access.ts";
+import { issueSetupToken } from "../src/auth/setup-tokens.ts";
 import { createLogin, deactivateLogin, LoginConflictError } from "../src/auth/logins.ts";
 import { createAuthService } from "../src/auth/service.ts";
 import { createDb } from "../src/client.ts";
@@ -88,8 +89,9 @@ describe("deactivateLogin (pnpm user:deactivate)", () => {
     const setup = await b.post("/api/auth/setup/password", { token: created.setupToken, password: "correct horse battery" });
     const secret = secretFromUri((setup.body.enrolment as { totpUri: string }).totpUri);
     await b.post("/api/auth/setup/confirm", { code: totpCode(secret) });
-    await createLogin(app, { email: address, name: "Leaver", role: "member" }); // an outstanding setup link too
     expect((await auth.session(b.headers())).status).toBe("signed-in");
+    // An outstanding setup link too. (A re-issue through createLogin would end the session first, so the row is added directly.)
+    await migrator.transaction().execute((trx) => issueSetupToken(trx, created.userId));
     return { address, created, auth, b };
   }
 

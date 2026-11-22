@@ -166,7 +166,8 @@ describe("setup link: expiry, tampering, reuse, races", () => {
     expect(loser.cookies.size).toBe(0);
     const accounts = await migrator.selectFrom("auth_accounts").select("id").where("user_id", "=", created.userId).where("provider_id", "=", "credential").execute();
     expect(accounts).toHaveLength(1);
-    expect(await migrator.selectFrom("auth_setup_tokens").select("id").where("user_id", "=", created.userId).execute()).toEqual([]);
+    // The link lives until enrolment is confirmed, so it is still there, and the password step cannot be done twice with it.
+    expect(await migrator.selectFrom("auth_setup_tokens").select("id").where("user_id", "=", created.userId).execute()).toHaveLength(1);
   });
 
   it("a rejected password does not use the link up: the person can try again", async () => {
@@ -201,12 +202,13 @@ describe("setup link: expiry, tampering, reuse, races", () => {
     expect(await migrator.selectFrom("auth_setup_tokens").select("id").where("user_id", "=", first.userId).execute()).toHaveLength(1);
   });
 
-  it("a re-issued link does not end the person's sessions until it is used (spec question: lost phone)", async () => {
-    // README: "Using it ... signs the person out everywhere." A thief holding a stolen phone's
-    // session keeps it until the person uses the new link, or for up to 7 days if they never do.
+  it("a re-issued link ends the person's sessions at once, before it is used (lost phone: the old device is locked out now)", async () => {
     const person = await enrolledUser();
-    await createLogin(app, { email: person.email, name: "Test Person", role: "member" });
     expect((await auth.session(person.browser.headers())).status).toBe("signed-in");
+    await createLogin(app, { email: person.email, name: "Test Person", role: "member" });
+    expect((await auth.session(person.browser.headers())).status).toBe("signed-out");
+    expect(await migrator.selectFrom("auth_sessions").select("id").where("user_id", "=", person.userId).execute()).toEqual([]);
+    expect(await migrator.selectFrom("auth_two_factors").select("id").where("user_id", "=", person.userId).execute()).toEqual([]);
   });
 });
 
@@ -218,10 +220,15 @@ async function emailOf(userId: string): Promise<string> {
 describe("passwords: how the 12-character rule counts", () => {
   /** n emoji that are not one repeated character (that is refused as too common). */
   const emoji = (n: number) => Array.from({ length: n }, (_, i) => (i % 2 ? "🔑" : "🔒")).join("");
-  const setPassword = async (password: string) => {
+  /** Step 1 of the setup link; with `finish`, also step 2, so the person can sign in (a password alone gets "setup isn't finished"). */
+  const setPassword = async (password: string, finish = false) => {
     const created = await createLogin(app, { email: email(), name: "Pw", role: "member" });
     const b = browser();
     const res = await b.post("/api/auth/setup/password", { token: created.setupToken, password });
+    if (finish && res.status === 200) {
+      const secret = secretFromUri((res.body.enrolment as Enrolment).totpUri);
+      expect((await b.post("/api/auth/setup/confirm", { code: totpCode(secret) })).status).toBe(200);
+    }
     return { res, b, created };
   };
 
@@ -260,7 +267,7 @@ describe("passwords: how the 12-character rule counts", () => {
     // setup/password counts code points (65 <= 128) but Better Auth counts UTF-16 units (130 > 128), so
     // the link is used up, the password is stored, and then enrolment answers 500 and every later sign-in is a 401.
     const password = emoji(65);
-    const { res, created } = await setPassword(password);
+    const { res, created } = await setPassword(password, true);
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     const login = await browser().post("/api/auth/sign-in", { email: await emailOf(created.userId), password });
     expect(login.status).toBe(200);
@@ -268,7 +275,7 @@ describe("passwords: how the 12-character rule counts", () => {
 
   it("128 emoji (the most our rule allows, 256 UTF-16 units) set up and sign in; 129 are refused with the 'at most' code", async () => {
     const password = emoji(128);
-    const { res, created } = await setPassword(password);
+    const { res, created } = await setPassword(password, true);
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect((await browser().post("/api/auth/sign-in", { email: await emailOf(created.userId), password })).status).toBe(200);
     expect(errCode((await setPassword("🔑".repeat(129))).res)).toBe("password_too_long");
@@ -304,7 +311,7 @@ describe("passwords: how the 12-character rule counts", () => {
   it("odd Unicode is never a 500: NUL, a lone surrogate, combining marks, right-to-left, and it signs in again with the same string", async () => {
     for (const p of ["a\u0000bcdefghijkl", "\ud800a".repeat(6), "e\u0301x".repeat(6), "\u202eabcdefghijkl", "tab\tand\nnewline!!"]) {
       secrets.push(p);
-      const { res, created } = await setPassword(p);
+      const { res, created } = await setPassword(p, true);
       expect(res.status, JSON.stringify(p)).toBe(200);
       const again = browser();
       const login = await again.post("/api/auth/sign-in", { email: await emailOf(created.userId), password: p });
@@ -316,9 +323,9 @@ describe("passwords: how the 12-character rule counts", () => {
     const nfd = "Café Cremé Brulée!!".normalize("NFD");
     const nfc = nfd.normalize("NFC");
     expect(nfd).not.toBe(nfc);
-    const a = await setPassword(nfd);
+    const a = await setPassword(nfd, true);
     expect((await browser().post("/api/auth/sign-in", { email: await emailOf(a.created.userId), password: nfc })).status).toBe(200);
-    const b = await setPassword(nfc);
+    const b = await setPassword(nfc, true);
     expect((await browser().post("/api/auth/sign-in", { email: await emailOf(b.created.userId), password: nfd })).status).toBe(200);
   });
 
