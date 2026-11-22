@@ -1,7 +1,7 @@
 import { log } from "@vault/db";
 import { NextResponse, type NextRequest } from "next/server";
 import { badRequest } from "./server/api-error.ts";
-import { normalisePath } from "./server/gate-path.ts";
+import { decodePath, normalisePath } from "./server/gate-path.ts";
 import { requireSignedIn } from "./server/session.ts";
 import { STATIC_SECURITY_HEADERS, contentSecurityPolicy } from "./server/security-headers.ts";
 
@@ -24,12 +24,22 @@ import { STATIC_SECURITY_HEADERS, contentSecurityPolicy } from "./server/securit
  */
 const PUBLIC_API = new Set(["/api/v1/health", "/api/v1/health/"]);
 
-/** `pathname` is the raw request path; the health route is public only when spelled exactly as it is. */
+const API_PREFIX = /^\/api\/v1(\/|$)/;
+
+/**
+ * `pathname` is the raw request path; the health route is public only when spelled exactly as it is.
+ * Everything else is protected when ANY reading of the path lands in /api/v1: as sent (lower-cased),
+ * decoded without touching it (%2F stays a slash-like character the router may treat as part of one
+ * segment), or decoded and normalised. Next may route by one reading while a prefix match uses another,
+ * so the gate takes the union rather than choosing.
+ */
 export function isProtectedApi(pathname: string): boolean {
-  const p = normalisePath(pathname);
+  const decoded = decodePath(pathname);
+  const normalised = normalisePath(pathname);
   // A path that can't be decoded is refused by the caller before this is asked; if asked, it is protected.
-  if (p === null) return true;
-  if (!(p === "/api/v1" || p.startsWith("/api/v1/"))) return false;
+  if (decoded === null || normalised === null) return true;
+  const readings = [pathname.toLowerCase(), decoded.toLowerCase(), decoded.replaceAll("\\", "/").toLowerCase(), normalised];
+  if (!readings.some((p) => API_PREFIX.test(p))) return false;
   return !PUBLIC_API.has(pathname);
 }
 

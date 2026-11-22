@@ -1,10 +1,11 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { guardMethods, installMethodGuard, SUPPORTED_METHODS } from "../http-gate.mjs";
+import { guardRequests, installRequestGuard, SUPPORTED_METHODS } from "../http-gate.mjs";
 
-// M1.3 T7: methods the app doesn't use are answered 405 in front of the Next runtime (which throws
-// on TRACE and friends before the proxy runs), on every path, with no stack trace logged.
+// M1.3 T7, T8: methods the app doesn't use are answered 405 in front of the Next runtime (which throws
+// on TRACE and friends before the proxy runs), on every path, with no stack trace logged; /_next/image is a
+// 404 that never reaches Next (whose own 404 first tries to create a read-only cache directory).
 let server: http.Server;
 let port: number;
 const reached: string[] = [];
@@ -12,7 +13,7 @@ const logged: string[] = [];
 
 beforeAll(async () => {
   server = http.createServer(
-    guardMethods(
+    guardRequests(
       (request, response) => {
         reached.push(`${request.method} ${request.url}`);
         response.end("next");
@@ -59,6 +60,23 @@ describe("the method gate in front of Next", () => {
     expect(reached).toEqual([`${method} /api/v1/me`]);
   });
 
+  it.each(["/_next/image?url=%2F&w=64&q=75", "/_next/image", "/_next/image/x", "/_next/imageX"])("%s is a JSON 404 and never reaches Next (the optimizer is off)", async (path) => {
+    reached.length = 0;
+    for (const method of ["GET", "HEAD", "POST"]) {
+      const res = await send(method, path);
+      expect(res.status, `${method} ${path}`).toBe(404);
+      if (method !== "HEAD") expect(JSON.parse(res.body)).toEqual({ error: { code: "not_found", message: "Not found." } });
+    }
+    expect(reached).toEqual([]);
+  });
+
+  it("other /_next paths go through", async () => {
+    reached.length = 0;
+    expect((await send("GET", "/_next/static/chunk.js")).status).toBe(200);
+    expect((await send("GET", "/_next/images")).status).toBe(404); // startsWith, like Next's own test
+    expect(reached).toEqual(["GET /_next/static/chunk.js"]);
+  });
+
   it("logs a status only: no stack trace, no path, no method text", async () => {
     logged.length = 0;
     await send("TRACE", "/secret-looking-path?token=abc");
@@ -68,9 +86,9 @@ describe("the method gate in front of Next", () => {
     expect(logged[0]).not.toMatch(/TRACE|secret-looking|token=|\bat \w+ \(|stack/i);
   });
 
-  it("installMethodGuard guards every server later created with http.createServer(listener)", async () => {
+  it("installRequestGuard guards every server later created with http.createServer(listener)", async () => {
     const fake = { createServer: http.createServer };
-    installMethodGuard(fake);
+    installRequestGuard(fake);
     const guarded = fake.createServer((_req, res) => res.end("ok"));
     await new Promise<void>((resolve) => guarded.listen(0, "127.0.0.1", resolve));
     const guardedPort = (guarded.address() as AddressInfo).port;

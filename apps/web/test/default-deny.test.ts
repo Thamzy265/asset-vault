@@ -103,7 +103,7 @@ describe("default-deny on /api/v1 (M1.3)", () => {
   });
 
   it("encoded and dotted spellings of an API path are refused like the plain one (lead decision 7)", async () => {
-    for (const p of ["/api/v1%2Fme", "/api/v1%2fme", "/%61pi/v1/me", "/api%2Fv1/me", "/api/v1%252Fme", "/api/v1%25252Fme", "/api/./v1/me", "/api/x/../v1/me", "/foo/..%2fapi/v1/me", "/api/v1/health%2F..%2Fme", "/api/v1/%68ealth", "/api%2Fv1/health", "/api\\v1\\me", "/api/v1/me/%2e%2e/me"]) {
+    for (const p of ["/api/v1%2Fme", "/api/v1%2fme", "/%61pi/v1/me", "/api%2Fv1/me", "/api/v1%252Fme", "/api/v1%25252Fme", "/api/./v1/me", "/api/x/../v1/me", "/foo/..%2fapi/v1/me", "/api/v1/health%2F..%2Fme", "/api/v1/%68ealth", "/api%2Fv1/health", "/api\\v1\\me", "/api/v1/me/%2e%2e/me", "/api/v1/health%2f..%2f..%2fetc%2fpasswd", "/api/v1%2f..%2f..%2fetc", "/api/v1/x%2f..%2f..%2f..%2fsign-in"]) {
       for (const method of ["GET", "POST"]) {
         const res = await call(p, method);
         expect(res.status, `${method} ${p}`).toBe(401);
