@@ -12,9 +12,9 @@ import { auditAuthEvent } from "./events.ts";
 import { clientIpPrefix } from "./ip.ts";
 import { APP_NAME, authOptions, BACKUP_CODE_COUNT, hashBackupCode } from "./options.ts";
 import { passwordProblem } from "./passwords.ts";
-import { accountKey, checkSignInLimit, ipKey, normaliseEmail, recordSignInFailure, retryMessage } from "./rate-limit.ts";
+import { accountKey, claimSignInAttempt, ipKey, normaliseEmail, releaseSignInAttempt, retryMessage } from "./rate-limit.ts";
 import { cookieValue, resolveSession, type SessionState } from "./session.ts";
-import { deleteSetupTokens, lockSetupToken, peekSetupToken } from "./setup-tokens.ts";
+import { lockSetupToken, lockSetupUser, peekSetupToken } from "./setup-tokens.ts";
 
 /**
  * The sign-in service behind /api/auth/* (design note M1.3). It wraps Better
@@ -248,18 +248,25 @@ export function createAuthService(handle: DbLike, config: AuthConfig, options: A
     const account = accountKey(config.encryptionKey, email);
     const ip = ipKey(prefix);
 
-    const limit = await checkSignInLimit(db, account, ip);
-    if (limit.limited) {
-      return reply.error(429, "rate_limited", { message: retryMessage(limit.retryAfterSeconds), retryAfterSeconds: limit.retryAfterSeconds }, { "retry-after": String(limit.retryAfterSeconds) });
+    // Counted before the password is checked, atomically; given back below if the password is right.
+    const claim = await claimSignInAttempt(db, account, ip);
+    if (claim.limited) {
+      return reply.error(429, "rate_limited", { message: retryMessage(claim.retryAfterSeconds), retryAfterSeconds: claim.retryAfterSeconds }, { "retry-after": String(claim.retryAfterSeconds) });
     }
 
-    const res = await auth.api.signInEmail({ body: { email, password: input.data.password }, headers: request.headers, asResponse: true });
+    let res: Response;
+    try {
+      res = await auth.api.signInEmail({ body: { email, password: input.data.password }, headers: request.headers, asResponse: true });
+    } catch (error) {
+      await releaseSignInAttempt(db, claim.id); // an error of ours is not a wrong password
+      throw error;
+    }
     if (!res.ok) {
-      await recordSignInFailure(db, account, ip);
       const known = await db.selectFrom("auth_users").select("id").where("email", "=", email).executeTakeFirst();
       await auditAuthEvent(db, log, "sign_in_failed", known?.id ?? null, prefix);
       return reply.error(401, "invalid_credentials");
     }
+    await releaseSignInAttempt(db, claim.id);
     const result = (await res.json()) as { twoFactorRedirect?: boolean };
     if (result.twoFactorRedirect) return reply.addCookies(res).json(200, { next: "code" });
 
@@ -321,6 +328,10 @@ export function createAuthService(handle: DbLike, config: AuthConfig, options: A
     return userId ? reply.json(200, { valid: true, step: await setupStep(userId) }) : reply.error(410, "link_invalid");
   }
 
+  async function twoFactorOn(trx: Transaction<Database>, userId: string): Promise<boolean> {
+    return (await trx.selectFrom("auth_users").select("two_factor_enabled").where("id", "=", userId).executeTakeFirst())?.two_factor_enabled === true;
+  }
+
   async function emailOfUser(trx: Transaction<Database>, userId: string): Promise<string> {
     return (await trx.selectFrom("auth_users").select("email").where("id", "=", userId).executeTakeFirstOrThrow()).email;
   }
@@ -338,7 +349,7 @@ export function createAuthService(handle: DbLike, config: AuthConfig, options: A
     const done = await db.transaction().execute(async (trx) => {
       const id = await lockSetupToken(trx, token);
       // The password step is done once, per link: after it the link only resumes step 2.
-      if (!id || (await trx.selectFrom("auth_two_factors").select("id").where("user_id", "=", id).executeTakeFirst())) return null;
+      if (!id || (await trx.selectFrom("auth_two_factors").select("id").where("user_id", "=", id).executeTakeFirst()) || (await twoFactorOn(trx, id))) return null;
       await trx.deleteFrom("auth_sessions").where("user_id", "=", id).execute();
       await trx.updateTable("auth_users").set({ two_factor_enabled: false, updated_at: new Date() }).where("id", "=", id).execute();
       await trx.deleteFrom("auth_accounts").where("user_id", "=", id).where("provider_id", "=", "credential").execute();
@@ -360,7 +371,7 @@ export function createAuthService(handle: DbLike, config: AuthConfig, options: A
     if (!(await peekSetupToken(db, token))) return reply.error(410, "link_invalid");
     const done = await db.transaction().execute(async (trx) => {
       const id = await lockSetupToken(trx, token);
-      if (!id) return "gone" as const;
+      if (!id || (await twoFactorOn(trx, id))) return "gone" as const; // enrolment already confirmed: the link must not hand out a session
       if (!(await trx.selectFrom("auth_two_factors").select("id").where("user_id", "=", id).executeTakeFirst())) return "step1" as const;
       await trx.deleteFrom("auth_sessions").where("user_id", "=", id).execute();
       return { id, enrolment: await createEnrolment(trx, id, await emailOfUser(trx, id)) };
@@ -385,17 +396,27 @@ export function createAuthService(handle: DbLike, config: AuthConfig, options: A
     const totp = input.data.code.replace(/\s+/g, "");
     const marker = totpMarker(userId, totp);
     const fresh = await claimTotp(marker);
-    const res = fresh ? await auth.api.verifyTOTP({ body: { code: totp }, headers: request.headers, asResponse: true }) : null;
-    if (!res?.ok) {
+    // Verify and use the link up under the same per-user lock the password and resume steps take, so a
+    // resume can't land between "2FA is on" and "the link is gone" (reviewer S2c).
+    const confirmed = fresh
+      ? await db.transaction().execute(async (trx) => {
+          await lockSetupUser(trx, userId);
+          const verified = await auth.api.verifyTOTP({ body: { code: totp }, headers: request.headers, asResponse: true });
+          if (!verified.ok) return null;
+          await trx.deleteFrom("auth_setup_tokens").where("user_id", "=", userId).execute(); // the link is used up now, not at the password step
+          return verified;
+        })
+      : null;
+    if (!confirmed) {
       if (fresh) await releaseTotp(marker);
       await auditAuthEvent(db, log, "2fa_failed", userId, prefix);
       return reply.error(401, "invalid_code");
     }
+    const res = confirmed;
     reply.addCookies(res);
     // Keep only the session this step just created: no password-only session survives enrolment.
     const token = await sessionTokenFrom(res);
     await db.deleteFrom("auth_sessions").where("user_id", "=", userId).where("token", "!=", token ?? "").execute();
-    await deleteSetupTokens(db, userId); // the link is used up now, not at the password step
     await auditAuthEvent(db, log, "2fa_enrolled", userId, null);
     await auditAuthEvent(db, log, "sign_in", userId, prefix);
     return reply.json(200, { next: "backup-codes" });
@@ -415,7 +436,8 @@ export function createAuthService(handle: DbLike, config: AuthConfig, options: A
 
   async function signOut(request: Request, everywhere: boolean): Promise<Response> {
     const reply = new Reply();
-    const current = await auth.api.getSession({ headers: request.headers }).catch(() => null);
+    // An error here (database down) is a 500, not "no session": the person must not be told they are signed out.
+    const current = await auth.api.getSession({ headers: request.headers });
     if (everywhere && !current) return reply.addCookies(await clearCookies()).error(401, "unauthorized");
     if (current) {
       if (everywhere) await db.deleteFrom("auth_sessions").where("user_id", "=", current.user.id).execute();
@@ -447,8 +469,9 @@ export function createAuthService(handle: DbLike, config: AuthConfig, options: A
     if (!(request.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) return reply.error(415, "unsupported_media_type");
     const declared = Number(request.headers.get("content-length") ?? "0");
     if (declared > MAX_BODY_BYTES) return reply.error(413, "payload_too_large");
-    const text = await request.text();
-    if (Buffer.byteLength(text) > MAX_BODY_BYTES) return reply.error(413, "payload_too_large");
+    // Read the stream and stop at the limit: a chunked body has no declared length (reviewer S5).
+    const text = await readLimited(request, MAX_BODY_BYTES);
+    if (text === null) return reply.error(413, "payload_too_large");
     let body: unknown = {};
     if (text.trim() !== "") {
       try {
@@ -491,4 +514,23 @@ function base32(bytes: Buffer): string {
   }
   if (bits > 0) out += alphabet[(value << (5 - bits)) & 31];
   return out;
+}
+
+/** The body as text, or null as soon as it is more than `limit` bytes (the rest of the stream is not read). */
+async function readLimited(request: Request, limit: number): Promise<string | null> {
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }

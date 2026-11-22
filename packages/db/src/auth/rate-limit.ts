@@ -54,10 +54,31 @@ export async function checkSignInLimit(db: Kysely<Database>, account: string, ip
   return { limited: true, retryAfterSeconds: Math.max(1, Math.ceil((retryAt - Date.now()) / 1000)) };
 }
 
-/** Records a failed password and drops failures that left the window (nothing older is kept). */
-export async function recordSignInFailure(db: Kysely<Database>, account: string, ip: string): Promise<void> {
-  await db.insertInto("auth_sign_in_failures").values({ account_key: account, ip_key: ip }).execute();
-  await db.deleteFrom("auth_sign_in_failures").where(sql<boolean>`at < now() - make_interval(secs => ${WINDOW_MS / 1000})`).execute();
+/**
+ * Counts a sign-in attempt BEFORE its password is checked, atomically (reviewer S1: with check and
+ * record apart, 30 parallel wrong passwords all got through). Under per-account and per-network
+ * advisory locks, held only for this short transaction (not for the password hash), it either
+ * refuses (the budget is spent) or inserts the attempt as a failure. The caller removes the row
+ * with releaseSignInAttempt when the password turns out right, so only wrong passwords stay counted.
+ * Failures that left the window are dropped here.
+ */
+export async function claimSignInAttempt(db: Kysely<Database>, account: string, ip: string): Promise<{ limited: false; id: string } | { limited: true; retryAfterSeconds: number }> {
+  return db.transaction().execute(async (trx) => {
+    // Always the same order (sorted), so two attempts can never wait for each other.
+    for (const key of [`sign-in-account:${account}`, `sign-in-ip:${ip}`].sort()) {
+      await sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`.execute(trx);
+    }
+    await trx.deleteFrom("auth_sign_in_failures").where(sql<boolean>`at < now() - make_interval(secs => ${WINDOW_MS / 1000})`).execute();
+    const limit = await checkSignInLimit(trx, account, ip);
+    if (limit.limited) return limit;
+    const row = await trx.insertInto("auth_sign_in_failures").values({ account_key: account, ip_key: ip }).returning("id").executeTakeFirstOrThrow();
+    return { limited: false as const, id: String(row.id) };
+  });
+}
+
+/** The password was right: the attempt claimed above is not a failure. */
+export async function releaseSignInAttempt(db: Kysely<Database>, id: string): Promise<void> {
+  await db.deleteFrom("auth_sign_in_failures").where("id", "=", id as never).execute();
 }
 
 /** The 429 copy (UI spec): "Too many tries. Try again in N minutes." */

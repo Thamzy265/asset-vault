@@ -61,6 +61,10 @@ export async function createLogin(handle: DbLike, input: NewLogin): Promise<Crea
       await trx.deleteFrom("auth_two_factors").where("user_id", "=", existing.id).execute();
       await trx.updateTable("auth_users").set({ two_factor_enabled: false, updated_at: sql<Date>`now()` }).where("id", "=", existing.id).execute();
       await deleteChallenges(trx, existing.id);
+      await trx
+        .insertInto("audit_log")
+        .values({ action: "update", entity_type: "user", entity_id: existing.id, details: JSON.stringify({ fields: ["two_factor", "sessions", "setup_link"] }) })
+        .execute();
       const link = await issueSetupToken(trx, existing.id);
       return { userId: existing.id, personId: existing.person_id!, setupToken: link.token, expiresAt: link.expiresAt, reissued: true };
     }

@@ -40,7 +40,8 @@ export async function resolveSession(deps: SessionDeps, headers: Headers): Promi
   const row = await deps.db
     .selectFrom("users")
     .innerJoin("auth_users", "auth_users.id", "users.id")
-    .select(["users.id", "users.role", "users.person_id", "users.deactivated_at", "auth_users.name", "auth_users.two_factor_enabled"])
+    .leftJoin("auth_two_factors", "auth_two_factors.user_id", "auth_users.id")
+    .select(["users.id", "users.role", "users.person_id", "users.deactivated_at", "auth_users.name", "auth_users.two_factor_enabled", "auth_two_factors.verified as two_factor_verified"])
     .where("users.id", "=", session.session.userId)
     .executeTakeFirst();
 
@@ -55,7 +56,8 @@ export async function resolveSession(deps: SessionDeps, headers: Headers): Promi
     await deps.db.deleteFrom("auth_sessions").where("token", "=", session.session.token).execute();
     return ended(deps.clearCookies());
   }
-  if (!row.two_factor_enabled) return { status: "two-factor-required", setCookies };
+  // 2FA counts as passed only with the flag on AND a verified enrolment (reviewer S2a): never on the flag alone.
+  if (!row.two_factor_enabled || row.two_factor_verified !== true) return { status: "two-factor-required", setCookies };
 
   const viewer = mintViewer({ userId: row.id, role: row.role, personId: row.person_id });
   return { status: "signed-in", viewer, user: { id: row.id, name: row.name, role: row.role, personId: row.person_id }, setCookies };
