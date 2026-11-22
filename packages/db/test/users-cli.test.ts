@@ -51,6 +51,7 @@ describe("users CLI", () => {
     const again = await users(["create", "--email", "bo@example.org", "--name", "Bo", "--role", "member"]);
     expect(again.code).toBe(0);
     expect(again.stdout).toMatch(/already has a login/i);
+    expect(again.stdout).toMatch(/every session, the authenticator and the backup codes were ended now/i);
     expect(again.stdout).toMatch(/setup#/);
   });
 

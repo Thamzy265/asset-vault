@@ -69,7 +69,7 @@ try {
       personId: values["person-id"] ?? null,
     });
     const intro = created.reissued
-      ? "This email already has a login. A new setup link was issued; the old one no longer works.\nUsing it sets a new password and a new authenticator (the old ones stop working)."
+      ? "This email already has a login. A new setup link was issued; the old one no longer works.\nEvery session, the authenticator and the backup codes were ended now. The link sets a new password and a new authenticator."
       : "Login created.";
     process.stdout.write(
       `${intro}\nGive this one-time setup link to the person (valid for 24 hours, until ${created.expiresAt.toISOString()}):\n\n` +
