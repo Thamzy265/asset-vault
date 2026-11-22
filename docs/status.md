@@ -7,10 +7,10 @@ Newest entry first. Plans and designs live in their own files; this log records 
 - Changed: QA passed 3/3 criteria (all automated) on throwaway stack `qa-m13`: admin and member created with `pnpm user:create` and set up in a real browser; signed-out API 401, password-only 403 `2fa_required`, old sessions 401 at once after sign-out-everywhere, re-issue and deactivation; all seven auth event types in the audit log, `ip_prefix` only on the four allowed events. `pnpm check` 976 pass, e2e 109 pass, deps:audit clean. Accessibility pass (keyboard-only, 320 px, 200% zoom, dark mode, hover, axe 0 violations in 5 runs). Privacy pass (no secrets in any log; no enumeration). Evidence: `docs/qa/M1.md` (M1.3 section), `docs/qa/M1/screens/3-*`; video `qa-artifacts/m1/M1.3-setup-signin-signout.webm`.
 - Lead decision on QA's spec gap: a refused attempt (429, "Too many tries") is not written to the audit log — anyone could otherwise fill the log at will; the failures that led to the lockout are already audited. Later line added.
 - Not observed: real phone authenticator (PM check, steps in `docs/qa/M1.md#pm-check`), live screen reader, Safari/Firefox, real Cloudflare client IPs (M1.4), waiting out session timeouts.
-- Merged: `git merge --no-ff feat/m1-3-sign-in` into `main` (local; not pushed — waiting for the PM's answer on pushing). Plan box M1.3 ticked.
+- Merged: `git merge --no-ff feat/m1-3-sign-in` into `main` as 04df550; pushed to GitHub on the PM's yes (2026-11-22). Plan box M1.3 ticked.
 - Gates: developer pass · tester pass · reviewer approve · QA pass · merge done
 - Open findings: none. M1.2 cleanup C3 still waiting.
-- Needs PM: phone authenticator check (~10 min); decision 2 (per-account lock keyed by email only); push to GitHub.
+- Needs PM: phone authenticator check (~10 min); decision 2 (per-account lock keyed by email only).
 - Blockers: Developer none · Tester none · Reviewer none · QA none · Marketer none · Lead none
 
 ## 2026-11-22 — M1.3 Sign-in with mandatory 2FA — reviewer: approve, to QA
