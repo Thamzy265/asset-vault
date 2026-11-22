@@ -89,17 +89,16 @@ describe("user:create refuses bad input and says nothing that helps an attacker 
     expect(await count("users")).toBe(before);
   });
 
-  it("the link uses only the origin of APP_URL: a path, query, fragment or user info in it never reaches the link", async () => {
-    for (const [value, origin] of [
-      ["https://vault.example.org/some/path?x=1#frag", "https://vault.example.org"],
-      [["https://evil:secret", "@vault.example.org"].join(""), "https://vault.example.org"],
-      ["http://127.0.0.1:3000/", "http://127.0.0.1:3000"],
-    ] as const) {
+  it("an APP_URL with a path, query, fragment or user info is refused, as the web app refuses it (reviewer: the CLI is as strict as loadAuthConfig); an origin, trailing slash allowed, makes the link", async () => {
+    for (const value of ["https://vault.example.org/some/path?x=1#frag", ["https://evil:secret", "@vault.example.org"].join("")]) {
       const res = await users(["create", "--email", `origin${Math.random().toString(36).slice(2, 8)}@example.org`, "--name", "Origin", "--role", "member"], { DATABASE_URL: fresh.appUrl, APP_URL: value });
-      expect(res.code, value).toBe(0);
-      expect(res.stdout, value).toContain(`\n${origin}/setup#`);
-      expect(res.stdout, value).not.toMatch(/evil|secret|frag|some\/path/);
+      expect(res.code, value).toBe(1);
+      expect(res.stdout, value).not.toContain("/setup#");
+      expect(res.stderr, value).not.toMatch(/evil|secret|frag|some\/path/);
     }
+    const ok = await users(["create", "--email", `origin${Math.random().toString(36).slice(2, 8)}@example.org`, "--name", "Origin", "--role", "member"], { DATABASE_URL: fresh.appUrl, APP_URL: "http://127.0.0.1:3000/" });
+    expect(ok.code).toBe(0);
+    expect(ok.stdout).toContain("\nhttp://127.0.0.1:3000/setup#");
   });
 
   it("the email is stored lower case whatever was typed, and a second create with other casing re-issues instead of making a second login", async () => {
