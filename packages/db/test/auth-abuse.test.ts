@@ -17,7 +17,7 @@ import { forgetUsedCodes, secretFromUri, totpCode } from "./support/totp.ts";
 // the real auth service and a real database as vault_app. The developer's own tests are in
 // auth-service.test.ts; these probe the places that file does not.
 //
-// Tests whose title starts with "BUG:" fail today and are the repro for a defect in the report.
+// The tester's BUG tests (T1, T2) were fixed in the fix round and now carry plain behaviour titles.
 // Tests whose title ends with "(accepted until M1.4)" or "(spec question)" lock in behaviour the
 // design note accepts or leaves open, so a change to it is a deliberate decision.
 const KEY = "tester-encryption-key-".padEnd(48, "t");

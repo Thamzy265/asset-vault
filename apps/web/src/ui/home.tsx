@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { OfflineError, postJson } from "./api.ts";
+import { OfflineError, postJson, type ApiResult } from "./api.ts";
 import { codesLeftText, COPY } from "./copy.ts";
-import { OfflineBanner } from "./parts.tsx";
+import { Banner, OfflineBanner } from "./parts.tsx";
 import { CODES_LEFT_KEY } from "./sign-in.tsx";
 
 type Me = { id: string; name: string; role: string; personId: string | null };
@@ -14,6 +14,7 @@ export function HomeShell() {
   const [failed, setFailed] = useState(false);
   const [offline, setOffline] = useState(false);
   const [codesLeft, setCodesLeft] = useState<number | null>(null);
+  const [signOutFailed, setSignOutFailed] = useState(false);
 
   useEffect(() => {
     try {
@@ -36,13 +37,20 @@ export function HomeShell() {
     );
   }, []);
 
+  /** Goes to the sign-in screen only when the server says the session is gone; anything else stays here and says so (lead decision, T3). */
   async function signOut(everywhere: boolean) {
+    setSignOutFailed(false);
+    let result: ApiResult;
     try {
-      await postJson(everywhere ? "/api/auth/sign-out-everywhere" : "/api/auth/sign-out");
-      window.location.assign("/sign-in?reason=signed-out");
+      result = await postJson(everywhere ? "/api/auth/sign-out-everywhere" : "/api/auth/sign-out");
     } catch (error) {
-      if (error instanceof OfflineError) setOffline(true);
+      if (error instanceof OfflineError) return setSignOutFailed(true);
+      throw error;
     }
+    if (result.status === 200) return window.location.assign("/sign-in?reason=signed-out");
+    // No session left on the server (it ended meanwhile): the person is signed out already.
+    if (result.status === 401) return window.location.assign("/sign-in?reason=ended");
+    setSignOutFailed(true);
   }
 
   const name = me?.name;
@@ -61,6 +69,7 @@ export function HomeShell() {
       </header>
       <main className="home" aria-busy={!me && !failed}>
         <OfflineBanner failed={offline} />
+        {signOutFailed ? <Banner kind="error">{COPY.notices.signOutFailed}</Banner> : null}
         {failed ? (
           <div className="banner banner-error" role="alert">
             {COPY.errors.generic}

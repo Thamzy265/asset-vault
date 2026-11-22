@@ -87,12 +87,20 @@ export function useOnline(): boolean {
 }
 
 /** Shown while the browser is offline, or after a request could not reach the server. */
-export function OfflineBanner({ failed = false }: { failed?: boolean }) {
+export function OfflineBanner({ failed = false, onRetry }: { failed?: boolean; onRetry?: () => void }) {
   const online = useOnline();
   if (online && !failed) return null;
   return (
     <div className="banner banner-error" role="alert">
       {COPY.notices.offline}
+      {onRetry ? (
+        <>
+          {" "}
+          <button type="button" className="link" onClick={onRetry}>
+            {COPY.notices.tryAgain}
+          </button>
+        </>
+      ) : null}
     </div>
   );
 }

@@ -3,10 +3,9 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { errorCodeOf, OfflineError, postJson, retryText, type ApiResult } from "./api.ts";
 import { COPY } from "./copy.ts";
-import { EnrolSteps, type Enrolment } from "./enrol.tsx";
 import { Banner, ErrorSummary, Field, OfflineBanner, type FieldError } from "./parts.tsx";
 
-type Step = { name: "credentials" } | { name: "code" } | { name: "backup" } | { name: "enrol"; enrolment: Enrolment };
+type Step = { name: "credentials" } | { name: "code" } | { name: "backup" };
 
 export const CODES_LEFT_KEY = "vault.backupCodesLeft";
 
@@ -25,7 +24,8 @@ function Title({ text, focus }: { text: string; focus: boolean }) {
 
 /**
  * Sign in -> 6-digit code (or a backup code) -> home (UI spec flow). A person
- * whose setup was never finished goes on to setup steps 2 and 3 instead.
+ * whose setup was never finished is told to open their setup link again: the
+ * password alone never resumes setup (lead decision 5).
  */
 export function SignInFlow({ notice }: { notice: string | null }) {
   const [step, setStep] = useState<Step>({ name: "credentials" });
@@ -39,14 +39,6 @@ export function SignInFlow({ notice }: { notice: string | null }) {
   };
   const again = () => go({ name: "credentials" }, { kind: "notice", text: COPY.notices.again });
 
-  if (step.name === "enrol") {
-    return (
-      <>
-        <Title text={COPY.setup.title} focus={false} />
-        <EnrolSteps enrolment={step.enrolment} onSignInAgain={again} />
-      </>
-    );
-  }
   const title = step.name === "credentials" ? COPY.signIn.title : step.name === "code" ? COPY.code.title : COPY.backup.title;
   return (
     <>
@@ -91,8 +83,8 @@ function CredentialsForm({ onNext, onMessage }: { onNext: (step: Step) => void; 
     }
     setBusy(false);
     if (result.status === 200 && result.body.next === "code") return onNext({ name: "code" });
-    if (result.status === 200 && result.body.next === "setup") return onNext({ name: "enrol", enrolment: result.body.enrolment as Enrolment });
     if (result.status === 429) return onMessage({ kind: "error", text: retryText(result) });
+    if (result.status === 403 && errorCodeOf(result) === "setup_unfinished") return onMessage({ kind: "error", text: COPY.errors.setupUnfinished });
     if (result.status === 401 || result.status === 400) return onMessage({ kind: "error", text: COPY.errors.credentials });
     onMessage({ kind: "error", text: COPY.errors.generic });
   }

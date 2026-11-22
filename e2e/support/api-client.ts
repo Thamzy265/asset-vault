@@ -62,12 +62,12 @@ export async function enrolledAccount(name = "Test Person", role: "admin" | "mem
 }
 
 /** A person who set a password and walked away before the authenticator step. */
-export async function passwordOnlyAccount(name = "Half Done"): Promise<{ email: string; client: Client }> {
+export async function passwordOnlyAccount(name = "Half Done"): Promise<{ email: string; client: Client; setupPath: string }> {
   const { email, setupPath } = await newLogin(name);
   const client = new Client();
   const setup = await client.post("/api/auth/setup/password", { token: setupPath.split("#")[1]!, password: PASSWORD });
   if (setup.status !== 200) throw new Error(`setup/password ${setup.status} ${setup.text}`);
-  return { email, client };
+  return { email, client, setupPath };
 }
 
 /**

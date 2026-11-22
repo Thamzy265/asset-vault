@@ -222,22 +222,33 @@ test("a deactivated user is refused on the next request and the home page says t
   expect((await page.request.get("/api/v1/me")).status()).toBe(401);
 });
 
-test("password-only session (setup abandoned after step 1): the API says 2fa_required; signing in again resumes at step 2", async ({ page }) => {
+test("password-only session (setup abandoned after step 1): the API says 2fa_required; the password alone does not resume setup, the link does", async ({ page }) => {
   const { email, setupPath } = await newLogin("Cy Example");
   await page.goto(setupPath);
   await page.getByLabel("New password", { exact: true }).fill(PASSWORD);
   await page.getByLabel("Confirm new password").fill(PASSWORD);
   await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.getByRole("heading", { level: 2, name: /Step 2 of 3/ })).toBeVisible();
+  const firstKey = (await page.locator("#setup-key").textContent())!.trim();
   const me = await page.request.get("/api/v1/me");
   expect(me.status()).toBe(403);
   expect(await me.json()).toEqual({ error: { code: "2fa_required", message: expect.any(String) } });
   await page.goto("/");
   await expect(page.getByText("Please sign in again.")).toBeVisible();
+  // The password alone gets no secret and does not resume setup (lead decision 5).
   await signIn(page, email);
+  const unfinished = page.getByRole("alert").filter({ hasText: "Your account setup isn't finished. Open your setup link again, or ask your admin for a new one." });
+  await expect(unfinished).toBeVisible();
+  await expect(unfinished).toBeFocused();
+  await expect(page.getByRole("heading", { level: 2 })).toHaveCount(0);
+  await expect(page.locator("#setup-key")).toHaveCount(0);
+  await axe(page, "sign in: setup not finished");
+  // The link still works and resumes at step 2, with a new key.
+  await page.goto(setupPath);
   await expect(page.getByRole("heading", { level: 2, name: "Step 2 of 3: Set up your authenticator app" })).toBeVisible();
   const key = (await page.locator("#setup-key").textContent())!.trim();
   expect(secretFromUri(`otpauth://totp/x?secret=${key}`)).toBe(key);
+  expect(key).not.toBe(firstKey);
 });
 
 test("offline: the banner appears and nothing is lost", async ({ page, context }) => {

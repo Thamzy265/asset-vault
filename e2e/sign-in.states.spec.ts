@@ -372,7 +372,7 @@ test("home: when /me answers 503 (database down) or 500 the error banner shows a
   }
 });
 
-test("BUG: when signing out fails (500) the person is told, instead of the page silently reloading with the session still alive", async ({ page }) => {
+test("when signing out fails (500) the person is told, the page stays and the session is untouched", async ({ page }) => {
   const account = await enrolledAccount("Shared Computer");
   await browserSession(page, account);
   await page.goto("/");
@@ -383,10 +383,10 @@ test("BUG: when signing out fails (500) the person is told, instead of the page 
   expect((await page.request.get("/api/v1/me")).status(), "the session is still alive").toBe(200);
   expect(await page.getByText("You're signed out.").count(), "the page must not claim a sign-out that did not happen").toBe(0);
   // Every error says how to recover (UI spec, Copy). Today the page just reloads itself with no word.
-  await expect(page.getByRole("alert").filter({ hasText: /couldn.?t|could not|went wrong|try again|failed|not signed out/i }), "the person is told the sign-out failed").toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: "We couldn't sign you out. Check your connection and try again." }), "the person is told the sign-out failed").toBeVisible();
 });
 
-test("BUG: when 'Sign out of all devices' fails (403) the person is told; the other devices are still signed in", async ({ page }) => {
+test("when 'Sign out of all devices' fails (403) the person is told; the other devices are still signed in", async ({ page }) => {
   const account = await enrolledAccount("Lost Laptop");
   const other = await signInClient(account);
   await browserSession(page, account);
@@ -397,7 +397,7 @@ test("BUG: when 'Sign out of all devices' fails (403) the person is told; the ot
   await page.waitForTimeout(1500);
   expect((await other.get("/api/v1/me")).status, "the other device is still signed in").toBe(200);
   expect(await page.getByText("You're signed out.").count(), "the page must not claim every device is signed out").toBe(0);
-  await expect(page.getByRole("alert").filter({ hasText: /couldn.?t|could not|went wrong|try again|failed|not signed out/i }), "the person is told the sign-out failed").toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: "We couldn't sign you out. Check your connection and try again." }), "the person is told the sign-out failed").toBeVisible();
 });
 
 test("after signing out, the Back button does not show the signed-in page again", async ({ page }) => {
@@ -514,7 +514,7 @@ test("error summary links move focus to the field they name, with the error read
   await page.getByRole("button", { name: "Sign in" }).click();
 });
 
-test("BUG: a pasted password longer than 128 characters is not silently cut: the person is told, instead of getting a password their password manager doesn't hold", async ({ page }) => {
+test("a pasted password longer than 128 characters is not silently cut: the field keeps it all and the person is told 'Use no more than 128 characters'", async ({ page }) => {
   const { email, setupPath } = await newLogin("Long Paste");
   await page.goto(setupPath);
   const long = "Pw-" + "x7Q".repeat(46); // 141 characters, as a password manager can generate
@@ -522,28 +522,29 @@ test("BUG: a pasted password longer than 128 characters is not silently cut: the
   await page.keyboard.insertText(long);
   await page.getByLabel("Confirm new password").focus();
   await page.keyboard.insertText(long);
+  expect(await page.getByLabel("New password", { exact: true }).inputValue(), "nothing was cut").toBe(long);
+  expect(await page.getByLabel("Confirm new password").inputValue(), "nothing was cut").toBe(long);
   await page.getByRole("button", { name: "Continue" }).click();
-  // Either the field kept all 141 characters and the person is told the limit, or the next step must not have been reached with a shorter password.
-  const step2 = page.getByRole("heading", { level: 2, name: /Step 2 of 3/ });
-  await Promise.race([step2.waitFor({ timeout: 5000 }).catch(() => {}), page.getByRole("heading", { name: "There is a problem" }).waitFor({ timeout: 5000 }).catch(() => {})]);
-  const reachedStep2 = await step2.isVisible();
-  const stored = await page.getByLabel("New password", { exact: true }).inputValue().catch(() => "");
-  if (reachedStep2) {
-    const signIn = await new Client().post("/api/auth/sign-in", { email, password: long });
-    expect(signIn.status, "the full pasted password does not sign in: it was cut to 128 characters without a word").toBe(200);
-  } else {
-    expect(stored.length === long.length || stored.length === 0).toBe(true);
-    await expect(page.getByText(/128/)).toBeVisible();
-  }
+  await expect(page.getByRole("heading", { name: "There is a problem" })).toBeFocused();
+  await expect(page.getByRole("link", { name: "Use no more than 128 characters" })).toBeVisible();
+  await expect(page.locator("#new-password-error")).toHaveText("Use no more than 128 characters");
+  await expect(page.getByText(/Use at least 12 characters/).and(page.locator("#new-password-error"))).toHaveCount(0);
+  await expect(page.getByRole("heading", { level: 2, name: /Step 2 of 3/ })).toHaveCount(0);
+  await axe(page, "setup: password over the limit");
+  // The link is still usable, and 128 characters exactly go through.
+  const exact = long.slice(0, 128);
+  await page.getByLabel("New password", { exact: true }).fill(exact);
+  await page.getByLabel("Confirm new password").fill(exact);
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByRole("heading", { level: 2, name: /Step 2 of 3/ })).toBeVisible();
+  void email;
 });
 
-test("a person who set a password and left can sign in, resumes at the authenticator step with a key that works, and finishes setup", async ({ page }) => {
+test("a person who set a password and left reopens the setup link, resumes at the authenticator step with a key that works, and finishes setup", async ({ page }) => {
   const half = await passwordOnlyAccount("Resume Me");
-  await page.goto("/sign-in");
-  await page.getByLabel("Email").fill(half.email);
-  await page.getByLabel("Password", { exact: true }).fill(PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.goto(half.setupPath);
   await expect(page.getByRole("heading", { level: 2, name: "Step 2 of 3: Set up your authenticator app" })).toBeVisible();
+  await expect(page).toHaveURL(/\/setup$/);
   const key = (await page.locator("#setup-key").textContent())!.trim();
   expect(secretFromUri(`otpauth://totp/x?secret=${key}`)).toBe(key);
   await page.getByLabel("6-digit code").fill(totpCode(key));
@@ -552,23 +553,34 @@ test("a person who set a password and left can sign in, resumes at the authentic
   await page.getByLabel("I've saved these codes").check();
   await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Welcome, Resume Me" })).toBeVisible();
+  // Used up now.
+  await page.context().clearCookies();
+  await page.goto(half.setupPath);
+  await expect(page.getByRole("heading", { level: 1, name: "This link has expired" })).toBeVisible();
 });
 
-test("BUG: if the setup link can't be checked because the connection drops on first load, a reload gets the person back to step 1, not 'This link has expired'", async ({ page }) => {
+test("if the setup link can't be checked because the connection drops on first load, the link stays in the address bar; 'Try again' and a reload both reach step 1", async ({ page }) => {
   const { setupPath } = await newLogin("Flaky Signal");
-  let first = true;
+  const token = setupPath.split("#")[1]!;
+  let failures = 1;
   await page.route("**/api/auth/setup/check", (route) => {
-    if (first) {
-      first = false;
-      return route.abort("connectionfailed");
-    }
+    if (failures-- > 0) return route.abort("connectionfailed");
     return route.continue();
   });
   await page.goto(setupPath);
   await expect(page.getByText("You're offline. Check your connection and try again.").first()).toBeVisible();
-  // "Try again": the connection is back and the person reloads the page they are on.
+  expect(new URL(page.url()).hash, "the link has not left the address bar").toBe(`#${token}`);
+  await axe(page, "setup: offline banner with Try again");
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByRole("heading", { level: 2, name: "Step 1 of 3: Choose a password" })).toBeVisible();
+  await expect(page).toHaveURL(/\/setup$/); // gone only now, after the check succeeded
+
+  // The same, with a reload instead of the button.
+  failures = 1;
+  await page.goto(setupPath);
+  await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
   await page.reload();
-  await expect(page.getByRole("heading", { level: 2, name: "Step 1 of 3: Choose a password" }), "the link is still valid on the server, but the reload shows the expired screen").toBeVisible();
+  await expect(page.getByRole("heading", { level: 2, name: "Step 1 of 3: Choose a password" }), "the link is still valid on the server").toBeVisible();
 });
 
 test("keyboard only through the whole first-time setup: password, show/hide toggle, authenticator code, backup codes, tick box, home", async ({ page }) => {
