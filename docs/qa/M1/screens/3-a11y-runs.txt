@@ -1,0 +1,82 @@
+##### run: kbd
+sign-in: axe violations=0; scroll 900/900; lowest text contrast 6.7:1 (BUTTON:Sign in); lowest field border 4.83:1
+sign-in tab order: Email(354x44) > Password(354x44) > Sign in(354x44)
+sign-in empty submit: focused = There is a problem | alert role present: 2
+sign-in with errors: axe violations=0; scroll 900/900; lowest text contrast 5.75:1 (H2:There is a problem); lowest field border 6.57:1
+setup 1: axe violations=0; scroll 900/900; lowest text contrast 6.7:1 (BUTTON:Show password); lowest field border 4.83:1
+setup 1 tab order: New password(354x44) > Confirm new password(354x44) > Show password(114x44) > Continue(354x44)
+kbd: after first Tab from new password, focus on: confirm-password
+setup 2: axe violations=0; scroll 900/900; lowest text contrast 6.7:1 (BUTTON:Copy key); lowest field border 4.83:1
+setup 2 tab order: Copy key(354x44) > 6-digit code(354x44) > Verify and continue(354x44)
+setup 3: axe violations=0; scroll 900/900; lowest text contrast 6.7:1 (BUTTON:Copy all); lowest field border n/a
+setup 3 tab order: Copy all(173x44) > Download as text(173x44) > I've saved these codes(24x24)
+kbd: checkbox ticked with Space: true
+home: axe violations=0; scroll 900/900; lowest text contrast 6.7:1 (BUTTON:Sign out); lowest field border n/a
+home tab order: Sign out(60x44) > Sign out of all devices(159x44)
+signed out: axe violations=0; scroll 900/900; lowest text contrast 6.7:1 (BUTTON:Sign in); lowest field border 4.83:1
+code: axe violations=0; scroll 900/900; lowest text contrast 6.7:1 (BUTTON:Verify); lowest field border 4.83:1
+code tab order: 6-digit code(354x44) > Verify(354x44) > Use a backup code(139x44)
+code error: focus on There is a problem | field aria-describedby -> code-error | aria-invalid: true
+code error: axe violations=0; scroll 900/900; lowest text contrast 5.75:1 (H2:There is a problem); lowest field border 6.57:1
+sign-in with code OK: kbd
+link expired: axe violations=0; scroll 900/900; lowest text contrast 16.91:1 (H1:This link has expired); lowest field border n/a
+##### run: dark
+sign-in: axe violations=0; scroll 900/900; lowest text contrast 8.08:1 (BUTTON:Sign in); lowest field border 5.46:1
+sign-in empty submit: focused = There is a problem | alert role present: 2
+sign-in with errors: axe violations=0; scroll 900/900; lowest text contrast 8.08:1 (BUTTON:Sign in); lowest field border 9.27:1
+setup 1: axe violations=0; scroll 900/900; lowest text contrast 8.08:1 (BUTTON:Show password); lowest field border 5.46:1
+setup 2: axe violations=0; scroll 900/900; lowest text contrast 8.08:1 (BUTTON:Copy key); lowest field border 5.46:1
+setup 3: axe violations=0; scroll 900/900; lowest text contrast 8.08:1 (BUTTON:Copy all); lowest field border n/a
+home: axe violations=0; scroll 900/900; lowest text contrast 8.08:1 (BUTTON:Sign out); lowest field border n/a
+signed out: axe violations=0; scroll 900/900; lowest text contrast 8.08:1 (BUTTON:Sign in); lowest field border 5.46:1
+code: axe violations=0; scroll 900/900; lowest text contrast 8.08:1 (BUTTON:Verify); lowest field border 5.46:1
+code error: focus on There is a problem | field aria-describedby -> code-error | aria-invalid: true
+code error: axe violations=0; scroll 900/900; lowest text contrast 8.08:1 (BUTTON:Verify); lowest field border 9.27:1
+sign-in with code OK: dark
+link expired: axe violations=0; scroll 900/900; lowest text contrast 15.18:1 (H1:This link has expired); lowest field border n/a
+##### run: w320
+sign-in: axe violations=0; scroll 320/320; lowest text contrast 6.7:1 (BUTTON:Sign in); lowest field border 4.83:1
+sign-in empty submit: focused = There is a problem | alert role present: 2
+sign-in with errors: axe violations=0; scroll 320/320; lowest text contrast 5.75:1 (H2:There is a problem); lowest field border 6.57:1
+setup 1: axe violations=0; scroll 320/320; lowest text contrast 6.7:1 (BUTTON:Show password); lowest field border 4.83:1
+setup 2: axe violations=0; scroll 320/320; lowest text contrast 6.7:1 (BUTTON:Copy key); lowest field border 4.83:1
+setup 3: axe violations=0; scroll 320/320; lowest text contrast 6.7:1 (BUTTON:Copy all); lowest field border n/a
+home: axe violations=0; scroll 320/320; lowest text contrast 6.7:1 (BUTTON:Sign out); lowest field border n/a
+signed out: axe violations=0; scroll 320/320; lowest text contrast 6.7:1 (BUTTON:Sign in); lowest field border 4.83:1
+code: axe violations=0; scroll 320/320; lowest text contrast 6.7:1 (BUTTON:Verify); lowest field border 4.83:1
+code error: focus on There is a problem | field aria-describedby -> code-error | aria-invalid: true
+code error: axe violations=0; scroll 320/320; lowest text contrast 5.75:1 (H2:There is a problem); lowest field border 6.57:1
+sign-in with code OK: w320
+link expired: axe violations=0; scroll 320/320; lowest text contrast 16.91:1 (H1:This link has expired); lowest field border n/a
+##### run: zoom200
+sign-in: axe violations=0; scroll 640/640; lowest text contrast 6.7:1 (BUTTON:Sign in); lowest field border 4.83:1
+sign-in empty submit: focused = There is a problem | alert role present: 2
+sign-in with errors: axe violations=0; scroll 640/640; lowest text contrast 5.75:1 (H2:There is a problem); lowest field border 6.57:1
+setup 1: axe violations=0; scroll 640/640; lowest text contrast 6.7:1 (BUTTON:Show password); lowest field border 4.83:1
+setup 2: axe violations=0; scroll 640/640; lowest text contrast 6.7:1 (BUTTON:Copy key); lowest field border 4.83:1
+setup 3: axe violations=0; scroll 640/640; lowest text contrast 6.7:1 (BUTTON:Copy all); lowest field border n/a
+home: axe violations=0; scroll 640/640; lowest text contrast 6.7:1 (BUTTON:Sign out); lowest field border n/a
+signed out: axe violations=0; scroll 640/640; lowest text contrast 6.7:1 (BUTTON:Sign in); lowest field border 4.83:1
+code: axe violations=0; scroll 640/640; lowest text contrast 6.7:1 (BUTTON:Verify); lowest field border 4.83:1
+code error: focus on There is a problem | field aria-describedby -> code-error | aria-invalid: true
+code error: axe violations=0; scroll 640/640; lowest text contrast 5.75:1 (H2:There is a problem); lowest field border 6.57:1
+sign-in with code OK: zoom200
+link expired: axe violations=0; scroll 640/640; lowest text contrast 16.91:1 (H1:This link has expired); lowest field border n/a
+##### run: desk
+sign-in: axe violations=0; scroll 900/900; lowest text contrast 6.7:1 (BUTTON:Sign in); lowest field border 4.83:1
+sign-in empty submit: focused = There is a problem | alert role present: 2
+sign-in with errors: axe violations=0; scroll 900/900; lowest text contrast 5.75:1 (H2:There is a problem); lowest field border 6.57:1
+setup 1: axe violations=0; scroll 900/900; lowest text contrast 6.7:1 (BUTTON:Show password); lowest field border 4.83:1
+setup 2: axe violations=0; scroll 900/900; lowest text contrast 6.7:1 (BUTTON:Copy key); lowest field border 4.83:1
+setup 3: axe violations=0; scroll 900/900; lowest text contrast 6.7:1 (BUTTON:Copy all); lowest field border n/a
+hover: Copy all before: bg rgb(255, 255, 255) border rgb(29, 78, 216) color rgb(29, 78, 216) text-decoration none auto
+hover: Copy all after:  bg rgb(255, 255, 255) border rgb(29, 78, 216) color rgb(29, 78, 216) text-decoration none auto
+offline: Copy all -> button shows Copied; clipboard has 10 lines; live region text: Copied to clipboard (present)
+offline: Download as text -> family-asset-vault-backup-codes.txt | lines: 12 | contains all 10 codes: true
+home: axe violations=0; scroll 900/900; lowest text contrast 6.7:1 (BUTTON:Sign out); lowest field border n/a
+signed out: axe violations=0; scroll 900/900; lowest text contrast 6.7:1 (BUTTON:Sign in); lowest field border 4.83:1
+code: axe violations=0; scroll 900/900; lowest text contrast 6.7:1 (BUTTON:Verify); lowest field border 4.83:1
+code error: focus on There is a problem | field aria-describedby -> code-error | aria-invalid: true
+code error: axe violations=0; scroll 900/900; lowest text contrast 5.75:1 (H2:There is a problem); lowest field border 6.57:1
+sign-in with code OK: desk
+link expired: axe violations=0; scroll 900/900; lowest text contrast 16.91:1 (H1:This link has expired); lowest field border n/a

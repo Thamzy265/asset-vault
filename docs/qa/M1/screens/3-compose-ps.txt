@@ -1,0 +1,4 @@
+SERVICE    STATUS                    PORTS
+postgres   Up 44 seconds (healthy)   5432/tcp
+web        Up 11 minutes (healthy)   127.0.0.1:3947->3000/tcp
+worker     Up 11 minutes (healthy)   

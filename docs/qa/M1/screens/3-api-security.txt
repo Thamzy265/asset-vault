@@ -1,0 +1,39 @@
+## signed out
+/api/v1/me -> 401 {"error":{"code":"unauthorized","message":"Sign in to continue."}}
+/api/v1/nope -> 401 {"error":{"code":"unauthorized","message":"Sign in to continue."}}
+/api/v1/health -> 200 {"status":"ok","db":"ok","version":"0.1.0","schema":{"expected":"0007_auth","applied":"0007_auth"},"workerHeartbeat":"2026-11-22T11:01:15.973Z"}
+/api/v1/%2e%2e/v1/me -> 401 {"error":{"code":"unauthorized","message":"Sign in to continue."}}
+/API/V1/me -> 401 {"error":{"code":"unauthorized","message":"Sign in to continue."}}
+## signed-out pages
+/ -> 307 redirect=http://127.0.0.1:3947/sign-in
+/sign-in -> 200 redirect=
+/setup -> 200 redirect=
+/_next/image?url=/x.png&w=64&q=75 -> 404 redirect=
+## password-only session (setup step 1 done, 2FA not enrolled)
+POST setup/password -> 200
+GET /api/v1/me -> 403 {"error":{"code":"2fa_required","message":"Finish setting up two-step sign-in to continue."}}
+GET / (HTML) -> 307 redirect=http://127.0.0.1:3947/sign-in?reason=again
+## headers: page and API
+HTTP/1.1 200 OK
+content-security-policy: default-src 'self'; script-src 'self' 'nonce-XruSSuTafRWOepkLKeLQFg==' 'strict-dynamic'; style-src 'self' 'nonce-XruSSuTafRWOepkLKeLQFg=='; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
+referrer-policy: same-origin
+x-content-type-options: nosniff
+Cache-Control: private, no-cache, no-store, max-age=0, must-revalidate
+---
+HTTP/1.1 401 Unauthorized
+cache-control: no-store
+content-security-policy: default-src 'self'; script-src 'self' 'nonce-g8oYOkS4gTWBWg9yoLgNLg==' 'strict-dynamic'; style-src 'self' 'nonce-g8oYOkS4gTWBWg9yoLgNLg=='; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
+referrer-policy: same-origin
+x-content-type-options: nosniff
+x-request-id: 1bf26fed-2917-4a72-83a6-d4b07db0640f
+---
+HTTP/1.1 200 OK
+content-security-policy: default-src 'self'; script-src 'self' 'nonce-+QNlQix8WQrRPBgeOgLU8Q==' 'strict-dynamic'; style-src 'self' 'nonce-+QNlQix8WQrRPBgeOgLU8Q=='; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
+referrer-policy: same-origin
+x-content-type-options: nosniff
+cache-control: no-store
+## TRACE and bad method
+TRACE /api/v1/me -> 405
+DELETE /api/v1/health -> 405
+## cross-origin sign-in refused
+POST sign-in with foreign Origin -> 404 {"error":{"code":"not_found","message":"No endpoint at this path."}}

@@ -1,0 +1,34 @@
+### sign-in with errors
+- main:
+  - heading "Sign in" [level=1]
+  - alert "There is a problem":
+    - heading "There is a problem" [level=2]
+    - list:
+      - listitem:
+        - link "Enter your email":
+          - /url: "#email"
+      - listitem:
+        - link "Enter your password":
+          - /url: "#password"
+  - text: Email
+  - textbox "Email" [invalid]
+  - text: Enter your email Password
+  - textbox "Password" [invalid]
+  - text: Enter your password
+  - button "Sign in"
+- alert
+
+### half-finished setup, link opened again -> Step 2 of 3: Set up your authenticator app
+
+### setup step 2 (resumed)
+- main:
+  - heading "Set up your account" [level=1]
+  - 'heading "Step 2 of 3: Set up your authenticator app" [level=2]'
+  - paragraph: Open your authenticator app (for example Google Authenticator, Microsoft Authenticator or 1Password), add an account and scan this code. If you can't scan it, enter the key below instead.
+  - img "QR code for your authenticator app"
+  - paragraph: Key GRUVM4S7IJ3WUVSSKRPUEZ2BMJKVGSRVJFGXAVCIJRNGIUKTKVLQ
+  - button "Copy key"
+  - text: 6-digit code
+  - textbox "6-digit code"
+  - button "Verify and continue"
+- alert

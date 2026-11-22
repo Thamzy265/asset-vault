@@ -1,0 +1,101 @@
+## audit_log by action: rows, rows with ip_prefix, prefixes, distinct details, rows without actor, entity types
+      action      | n  | with_ip |                  prefixes                   |                                                       details                                                       | no_actor |   entity    
+------------------+----+---------+---------------------------------------------+---------------------------------------------------------------------------------------------------------------------+----------+-------------
+ 2fa_enrolled     |  6 |       0 |                                             | -                                                                                                                   |        0 | -
+ 2fa_failed       |  8 |       8 | 192.0.2.0/24,203.0.113.0/24                 | -                                                                                                                   |        0 | -
+ backup_code_used |  1 |       1 | 203.0.113.0/24                              | -                                                                                                                   |        0 | -
+ create           |  8 |       0 |                                             | {"fields": ["display_name"]} ; {"fields": ["email", "name", "role", "person_id"]}                                   |        8 | person,user
+ password_changed |  7 |       0 |                                             | -                                                                                                                   |        0 | -
+ sign_in          | 16 |       9 | 203.0.113.0/24                              | -                                                                                                                   |        0 | -
+ sign_in_failed   | 12 |      12 | 192.0.2.0/24,198.51.100.0/24,203.0.113.0/24 | -                                                                                                                   |        9 | -
+ sign_out         |  8 |       0 |                                             | -                                                                                                                   |        0 | -
+ update           |  4 |       0 |                                             | {"fields": ["email", "name", "person_id", "deactivated_at"]} ; {"fields": ["two_factor", "sessions", "setup_link"]} |        4 | user
+(9 rows)
+
+## timeline (actor shown as a number, no emails exist in this table)
+ id |    t     | actor_no |      action      | entity_type |    ip_prefix    |                           details                            
+----+----------+----------+------------------+-------------+-----------------+--------------------------------------------------------------
+  1 | 10:58:05 |        1 | create           | person      |                 | {"fields": ["display_name"]}
+  2 | 10:58:05 |        1 | create           | user        |                 | {"fields": ["email", "name", "role", "person_id"]}
+  3 | 10:58:07 |        1 | create           | person      |                 | {"fields": ["display_name"]}
+  4 | 10:58:07 |        1 | create           | user        |                 | {"fields": ["email", "name", "role", "person_id"]}
+  5 | 10:58:29 |        3 | password_changed |             |                 | 
+  6 | 10:58:29 |        3 | 2fa_enrolled     |             |                 | 
+  7 | 10:58:29 |        3 | sign_in          |             |                 | 
+  8 | 10:58:30 |        3 | sign_out         |             |                 | 
+  9 | 10:58:31 |        3 | sign_in          |             |                 | 
+ 10 | 10:58:32 |        3 | sign_out         |             |                 | 
+ 11 | 10:58:46 |        1 | update           | user        |                 | {"fields": ["two_factor", "sessions", "setup_link"]}
+ 12 | 10:58:46 |        3 | password_changed |             |                 | 
+ 13 | 10:58:47 |        3 | 2fa_enrolled     |             |                 | 
+ 14 | 10:58:47 |        3 | sign_in          |             |                 | 
+ 15 | 10:58:48 |        3 | sign_out         |             |                 | 
+ 16 | 10:58:48 |        3 | sign_in          |             |                 | 
+ 17 | 10:58:49 |        3 | sign_out         |             |                 | 
+ 18 | 10:58:56 |        1 | update           | user        |                 | {"fields": ["two_factor", "sessions", "setup_link"]}
+ 19 | 10:58:57 |        3 | password_changed |             |                 | 
+ 20 | 10:58:57 |        3 | 2fa_enrolled     |             |                 | 
+ 21 | 10:58:57 |        3 | sign_in          |             |                 | 
+ 22 | 10:58:58 |        3 | sign_out         |             |                 | 
+ 23 | 10:58:59 |        3 | sign_in          |             |                 | 
+ 24 | 10:59:00 |        3 | sign_out         |             |                 | 
+ 25 | 10:59:04 |        4 | password_changed |             |                 | 
+ 26 | 10:59:04 |        4 | 2fa_enrolled     |             |                 | 
+ 27 | 10:59:04 |        4 | sign_in          |             |                 | 
+ 28 | 10:59:30 |        3 | sign_in_failed   |             | 203.0.113.0/24  | 
+ 29 | 10:59:30 |        1 | sign_in_failed   |             | 203.0.113.0/24  | 
+ 30 | 10:59:31 |        4 | 2fa_failed       |             | 203.0.113.0/24  | 
+ 31 | 10:59:37 |        4 | 2fa_failed       |             | 203.0.113.0/24  | 
+ 32 | 11:00:07 |        4 | backup_code_used |             | 203.0.113.0/24  | 
+ 33 | 11:00:07 |        4 | sign_in          |             | 203.0.113.0/24  | 
+ 34 | 11:00:07 |        4 | sign_out         |             |                 | 
+ 35 | 11:00:37 |        4 | 2fa_failed       |             | 203.0.113.0/24  | 
+ 36 | 11:00:38 |        3 | sign_in          |             | 203.0.113.0/24  | 
+ 37 | 11:00:39 |        3 | sign_in          |             | 203.0.113.0/24  | 
+ 38 | 11:00:39 |        3 | sign_out         |             |                 | 
+ 39 | 11:00:58 |        4 | sign_in          |             | 203.0.113.0/24  | 
+ 40 | 11:01:05 |        4 | sign_in          |             | 203.0.113.0/24  | 
+ 41 | 11:01:05 |        1 | update           | user        |                 | {"fields": ["two_factor", "sessions", "setup_link"]}
+ 42 | 11:01:19 |        4 | password_changed |             |                 | 
+ 43 | 11:01:19 |        4 | 2fa_enrolled     |             |                 | 
+ 44 | 11:01:19 |        4 | sign_in          |             | 203.0.113.0/24  | 
+ 45 | 11:01:20 |        1 | create           | person      |                 | {"fields": ["display_name"]}
+ 46 | 11:01:20 |        1 | create           | user        |                 | {"fields": ["email", "name", "role", "person_id"]}
+ 47 | 11:01:21 |        2 | password_changed |             |                 | 
+ 48 | 11:01:21 |        2 | 2fa_enrolled     |             |                 | 
+ 49 | 11:01:21 |        2 | sign_in          |             | 203.0.113.0/24  | 
+ 50 | 11:01:29 |        2 | sign_in          |             | 203.0.113.0/24  | 
+ 51 | 11:01:29 |        1 | update           | user        |                 | {"fields": ["email", "name", "person_id", "deactivated_at"]}
+ 52 | 11:01:30 |        1 | sign_in_failed   |             | 203.0.113.0/24  | 
+ 53 | 11:01:45 |        1 | create           | person      |                 | {"fields": ["display_name"]}
+ 54 | 11:01:45 |        1 | create           | user        |                 | {"fields": ["email", "name", "role", "person_id"]}
+ 55 | 11:01:54 |        5 | password_changed |             |                 | 
+ 56 | 11:02:08 |        3 | sign_in          |             | 203.0.113.0/24  | 
+ 57 | 11:02:08 |        4 | sign_in_failed   |             | 198.51.100.0/24 | 
+ 58 | 11:02:08 |        4 | sign_in_failed   |             | 198.51.100.0/24 | 
+ 59 | 11:02:09 |        1 | sign_in_failed   |             | 198.51.100.0/24 | 
+ 60 | 11:02:09 |        1 | sign_in_failed   |             | 198.51.100.0/24 | 
+ 61 | 11:02:17 |        1 | sign_in_failed   |             | 192.0.2.0/24    | 
+ 62 | 11:02:18 |        1 | sign_in_failed   |             | 192.0.2.0/24    | 
+ 63 | 11:02:19 |        1 | sign_in_failed   |             | 192.0.2.0/24    | 
+ 64 | 11:02:20 |        1 | sign_in_failed   |             | 192.0.2.0/24    | 
+ 65 | 11:02:20 |        1 | sign_in_failed   |             | 192.0.2.0/24    | 
+ 66 | 11:02:22 |        4 | 2fa_failed       |             | 192.0.2.0/24    | 
+ 67 | 11:02:23 |        4 | 2fa_failed       |             | 192.0.2.0/24    | 
+ 68 | 11:02:24 |        4 | 2fa_failed       |             | 192.0.2.0/24    | 
+ 69 | 11:02:25 |        4 | 2fa_failed       |             | 192.0.2.0/24    | 
+ 70 | 11:02:25 |        4 | 2fa_failed       |             | 192.0.2.0/24    | 
+(70 rows)
+
+## rows containing an email, a QA name, a passphrase or an address anywhere in the row
+ rows_with_personal_values 
+---------------------------
+                         0
+(1 row)
+
+## sign_in_failed: unattributed (unknown email) vs attributed (known email)
+ unattributed | attributed 
+--------------+------------
+            9 |          3
+(1 row)
+
