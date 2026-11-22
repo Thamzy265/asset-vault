@@ -1,9 +1,9 @@
-import { sql } from "kysely";
+import { sql, type Transaction } from "kysely";
 import { z } from "zod";
 import { ValidationError } from "../access.ts";
 import { kyselyOf, type DbLike } from "../handle.ts";
 import { normaliseDisplayName } from "../names.ts";
-import type { Role } from "../schema.ts";
+import type { Database, Role } from "../schema.ts";
 import { normaliseEmail } from "./rate-limit.ts";
 import { issueSetupToken } from "./setup-tokens.ts";
 
@@ -81,6 +81,19 @@ export async function createLogin(handle: DbLike, input: NewLogin): Promise<Crea
 }
 
 /**
+ * Deletes the user's open sign-in challenges and the rows that hang off them.
+ * auth_verifications has no foreign key (the library keeps the user id in `value`), so cascade
+ * can't do it: the challenge itself (identifier = challenge id, value = user id), its
+ * "2fa-attempts-<id>" counter, trusted-device marks, and the spent-TOTP-code marks.
+ */
+export async function deleteChallenges(trx: Transaction<Database>, userId: string): Promise<void> {
+  const own = await trx.selectFrom("auth_verifications").select("identifier").where("value", "=", userId).execute();
+  const ids = own.map((r) => r.identifier);
+  if (ids.length) await trx.deleteFrom("auth_verifications").where("identifier", "in", [...ids, ...ids.map((id) => `2fa-attempts-${id}`)]).execute();
+  await trx.deleteFrom("auth_verifications").where("identifier", "like", `totp-used:${userId}:%`).execute();
+}
+
+/**
  * Deactivates a login (design note M1.3, Privacy): deletes its sign-in data
  * (auth_users: email and name; and by cascade the password hash, TOTP secret,
  * backup codes, sessions and setup links), clears person_id (item c, so an
@@ -94,6 +107,7 @@ export async function deactivateLogin(handle: DbLike, rawEmail: string): Promise
   return db.transaction().execute(async (trx) => {
     const found = await trx.selectFrom("auth_users").select("id").where("email", "=", email).forUpdate().executeTakeFirst();
     if (!found) return false;
+    await deleteChallenges(trx, found.id);
     await trx.deleteFrom("auth_users").where("id", "=", found.id).execute();
     await trx.updateTable("users").set({ deactivated_at: sql<Date>`now()`, person_id: null }).where("id", "=", found.id).execute();
     await trx

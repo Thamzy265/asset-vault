@@ -97,7 +97,7 @@ describe("deactivation with every auth table populated", () => {
     expect((await auth.session(second.headers())).status).toBe("signed-out");
   });
 
-  it("BUG (low): a sign-in challenge that was open at deactivation does not keep pointing at the user's id", async () => {
+  it("a sign-in challenge open at deactivation is deleted with the rest of the user's sign-in data", async () => {
     // auth_verifications.value holds the user id of an open sign-in challenge. The table has no foreign key, so
     // deactivation does not remove the row; it lives until the worker's 15-minute cleanup (10-minute challenge).
     const { address, created } = await enrolled();
