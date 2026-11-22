@@ -96,6 +96,20 @@ describe("users CLI", () => {
     expect(result.stderr).not.toContain("eve@example.org");
   });
 
+  it.each(["https://vault.example.org/app", "https://vault.example.org?x=1", "https://user:pw@vault.example.org", "ftp://vault.example.org", "vault.example.org", "https://vault.example.org/ "])("refuses an APP_URL that is not an origin only, like the web app does (%s)", async (bad) => {
+    const result = await users(["create", "--email", "g@example.org", "--name", "G", "--role", "member"], { DATABASE_URL: fresh.appUrl, APP_URL: bad });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("APP_URL");
+    expect(result.stdout).not.toContain("/setup#");
+    expect(result.stderr).not.toContain("pw@");
+  });
+
+  it("accepts an origin with a trailing slash and prints the link on the origin", async () => {
+    const result = await users(["create", "--email", "h@example.org", "--name", "H", "--role", "member"], { DATABASE_URL: fresh.appUrl, APP_URL: "https://vault.example.org:8443/" });
+    expect(result.code).toBe(0);
+    expect(result.stdout).toMatch(/https:\/\/vault\.example\.org:8443\/setup#/);
+  });
+
   it("refuses to start without APP_URL (the link would be wrong)", async () => {
     const result = await users(["create", "--email", "f@example.org", "--name", "F", "--role", "member"], { DATABASE_URL: fresh.appUrl });
     expect(result.code).toBe(1);

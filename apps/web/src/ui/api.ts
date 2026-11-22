@@ -38,10 +38,3 @@ export function errorMessageOf(result: ApiResult): string | undefined {
   const error = result.body.error as { message?: string } | undefined;
   return error?.message;
 }
-
-/** Spec copy: "Too many tries. Try again in N minutes." (singular for 1, rounded up). */
-export function retryText(result: ApiResult): string {
-  const error = result.body.error as { retryAfterSeconds?: number } | undefined;
-  const minutes = Math.max(1, Math.ceil((error?.retryAfterSeconds ?? 900) / 60));
-  return `Too many tries. Try again in ${minutes} ${minutes === 1 ? "minute" : "minutes"}.`;
-}

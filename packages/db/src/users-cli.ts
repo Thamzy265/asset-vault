@@ -8,6 +8,7 @@
 // the URL fragment, so it never reaches a server or proxy log.
 import { parseArgs } from "node:util";
 import { ValidationError } from "./access.ts";
+import { appUrlSchema } from "./auth/config.ts";
 import { createLogin, deactivateLogin, LoginConflictError } from "./auth/logins.ts";
 import { createDb } from "./client.ts";
 import { loadDbConfig } from "./config.ts";
@@ -25,13 +26,10 @@ function fail(message: string): never {
 }
 
 function appUrl(env: Record<string, string | undefined>): string {
-  try {
-    const url = new URL(env.APP_URL ?? "");
-    if (url.protocol === "https:" || url.protocol === "http:") return url.origin;
-  } catch {
-    // fall through
-  }
-  return fail("APP_URL is required: the address people open the app at, e.g. https://vault.example.org");
+  // The same rule as the web app's APP_URL (loadAuthConfig): an origin only, so a setup link is never built on a wrong base.
+  const parsed = appUrlSchema.safeParse(env.APP_URL);
+  if (parsed.success) return parsed.data;
+  return fail(`APP_URL is invalid: ${parsed.error.issues.map((i) => i.message).join("; ")}. It is the address people open the app at, e.g. https://vault.example.org`);
 }
 
 const [command, ...rest] = process.argv.slice(2);

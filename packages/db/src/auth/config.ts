@@ -23,8 +23,8 @@ export type AuthConfig = {
 const UNTRUSTWORTHY_IP_HEADERS = new Set(["x-forwarded-for", "forwarded", "x-real-ip"]);
 const MIN_KEY_LENGTH = 32;
 
-const schema = z.object({
-  APP_URL: z
+/** APP_URL: an http(s) origin only. Shared with the user commands, which print setup links from it. */
+export const appUrlSchema = z
     .string({ error: "is required" })
     .min(1, { error: "is required" })
     .superRefine((value, ctx) => {
@@ -38,7 +38,10 @@ const schema = z.object({
       if (url.protocol !== "https:" && url.protocol !== "http:") ctx.addIssue({ code: "custom", message: "must be an http(s) URL" });
       else if (url.origin !== value.replace(/\/$/, "")) ctx.addIssue({ code: "custom", message: "must be an origin only (scheme, host and port; no path, query or credentials)" });
     })
-    .transform((value) => new URL(value).origin),
+    .transform((value) => new URL(value).origin);
+
+const schema = z.object({
+  APP_URL: appUrlSchema,
   AUTH_ENCRYPTION_KEY: z
     .string({ error: "is required" })
     .min(1, { error: "is required" })
