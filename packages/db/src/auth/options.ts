@@ -22,6 +22,11 @@ export const SESSION_ABSOLUTE_MS = 7 * 24 * 60 * 60 * 1000;
 const SESSION_REFRESH_SECONDS = 5 * 60;
 export const PASSWORD_MIN_LENGTH = 12;
 export const PASSWORD_MAX_LENGTH = 128;
+/**
+ * Our rule counts code points (passwords.ts); the library counts UTF-16 units, at most 2 per code point.
+ * Its own limit is set to the most our rule can allow, so it never refuses what our rule accepted.
+ */
+export const LIBRARY_PASSWORD_MAX_UNITS = PASSWORD_MAX_LENGTH * 2;
 export const BACKUP_CODE_COUNT = 10;
 export const APP_NAME = "Family Asset Vault";
 
@@ -83,7 +88,7 @@ export function authOptions(db: Kysely<Database>, config: AuthConfig, hooks: Aut
       disableSignUp: true,
       autoSignIn: false,
       minPasswordLength: PASSWORD_MIN_LENGTH,
-      maxPasswordLength: PASSWORD_MAX_LENGTH,
+      maxPasswordLength: LIBRARY_PASSWORD_MAX_UNITS,
     },
     user: {
       modelName: AUTH_TABLES.user,

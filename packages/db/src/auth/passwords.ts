@@ -15,6 +15,8 @@ export function passwordProblem(password: string): PasswordProblem | null {
   const length = [...password].length;
   if (length < PASSWORD_MIN_LENGTH) return "password_too_short";
   if (length > PASSWORD_MAX_LENGTH) return "password_too_long";
+  // Nothing a person could mean as a password: only whitespace, or one character repeated.
+  if (password.trim() === "" || new Set(password).size === 1) return "password_too_common";
   if (COMMON.has(password.toLowerCase()) || COMMON.has(password.trim().toLowerCase())) return "password_too_common";
   return null;
 }

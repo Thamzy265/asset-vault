@@ -216,6 +216,8 @@ async function emailOf(userId: string): Promise<string> {
 
 // ---------------------------------------------------------------------------------------------
 describe("passwords: how the 12-character rule counts", () => {
+  /** n emoji that are not one repeated character (that is refused as too common). */
+  const emoji = (n: number) => Array.from({ length: n }, (_, i) => (i % 2 ? "🔑" : "🔒")).join("");
   const setPassword = async (password: string) => {
     const created = await createLogin(app, { email: email(), name: "Pw", role: "member" });
     const b = browser();
@@ -236,7 +238,7 @@ describe("passwords: how the 12-character rule counts", () => {
 
   it("counts code points, not UTF-16 units: 11 emoji (22 units) are too short, 12 are enough", async () => {
     expect(errCode((await setPassword("😀".repeat(11))).res)).toBe("password_too_short");
-    expect((await setPassword("🔑".repeat(12))).res.status).toBe(200);
+    expect((await setPassword(emoji(12))).res.status).toBe(200);
   });
 
   it("counts code points, not grapheme clusters: two family emoji (2 clusters, 14 code points) pass (spec question)", async () => {
@@ -254,14 +256,31 @@ describe("passwords: how the 12-character rule counts", () => {
     expect(errCode((await setPassword("🔑".repeat(129))).res)).toBe("password_too_long");
   });
 
-  it("BUG: a password of 65 emoji (65 characters, 130 UTF-16 units) is accepted by the length rule, so setup must finish and the person must be able to sign in", async () => {
+  it("a password of 65 emoji (65 characters, 130 UTF-16 units) is accepted by the length rule, so setup finishes and the person can sign in", async () => {
     // setup/password counts code points (65 <= 128) but Better Auth counts UTF-16 units (130 > 128), so
     // the link is used up, the password is stored, and then enrolment answers 500 and every later sign-in is a 401.
-    const password = "🔑".repeat(65);
+    const password = emoji(65);
     const { res, created } = await setPassword(password);
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     const login = await browser().post("/api/auth/sign-in", { email: await emailOf(created.userId), password });
     expect(login.status).toBe(200);
+  });
+
+  it("128 emoji (the most our rule allows, 256 UTF-16 units) set up and sign in; 129 are refused with the 'at most' code", async () => {
+    const password = emoji(128);
+    const { res, created } = await setPassword(password);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect((await browser().post("/api/auth/sign-in", { email: await emailOf(created.userId), password })).status).toBe(200);
+    expect(errCode((await setPassword("🔑".repeat(129))).res)).toBe("password_too_long");
+  });
+
+  it("a password of only spaces, tabs or one repeated character is refused as too common, however long", async () => {
+    for (const p of [" ".repeat(12), " ".repeat(128), "\t".repeat(12), " \t \n ".repeat(4), "\u00a0".repeat(12), "a".repeat(12), "1".repeat(40), "🔑".repeat(12), "é".repeat(100)]) {
+      const { res } = await setPassword(p);
+      expect(res.status, JSON.stringify(p)).toBe(400);
+      expect(errCode(res), JSON.stringify(p)).toBe("password_too_common");
+    }
+    expect((await setPassword("aaaaaaaaaaab")).res.status).toBe(200);
   });
 
   it("an 8 KB password is a clean 400, over the body limit a clean 413; neither hashes anything", async () => {
@@ -283,7 +302,7 @@ describe("passwords: how the 12-character rule counts", () => {
   });
 
   it("odd Unicode is never a 500: NUL, a lone surrogate, combining marks, right-to-left, and it signs in again with the same string", async () => {
-    for (const p of ["a\u0000bcdefghijkl", "\ud800".repeat(12), "é".repeat(12), "‮abcdefghijkl", "tab\tand\nnewline!!"]) {
+    for (const p of ["a\u0000bcdefghijkl", "\ud800a".repeat(6), "e\u0301x".repeat(6), "\u202eabcdefghijkl", "tab\tand\nnewline!!"]) {
       secrets.push(p);
       const { res, created } = await setPassword(p);
       expect(res.status, JSON.stringify(p)).toBe(200);
