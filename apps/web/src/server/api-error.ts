@@ -3,13 +3,18 @@
  * JSON-only, errors included). Messages are fixed strings: never echo the
  * request, a stack trace or anything internal.
  */
-export type ApiErrorCode = "not_found" | "method_not_allowed" | "unauthorized" | "2fa_required" | "internal_error" | "unavailable";
+export type ApiErrorCode = "bad_request" | "not_found" | "method_not_allowed" | "unauthorized" | "2fa_required" | "internal_error" | "unavailable";
 
 export type ApiErrorBody = { error: { code: ApiErrorCode; message: string } };
 
 export function apiError(status: number, code: ApiErrorCode, message: string, headers: HeadersInit = {}): Response {
   const body: ApiErrorBody = { error: { code, message } };
   return Response.json(body, { status, headers });
+}
+
+/** A path that can't be decoded (lead decision 7): refused before any routing. */
+export function badRequest(): Response {
+  return apiError(400, "bad_request", "The request path is not valid.", { "cache-control": "no-store" });
 }
 
 export function notFound(): Response {

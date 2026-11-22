@@ -102,6 +102,27 @@ describe("default-deny on /api/v1 (M1.3)", () => {
     }
   });
 
+  it("encoded and dotted spellings of an API path are refused like the plain one (lead decision 7)", async () => {
+    for (const p of ["/api/v1%2Fme", "/api/v1%2fme", "/%61pi/v1/me", "/api%2Fv1/me", "/api/v1%252Fme", "/api/v1%25252Fme", "/api/./v1/me", "/api/x/../v1/me", "/foo/..%2fapi/v1/me", "/api/v1/health%2F..%2Fme", "/api/v1/%68ealth", "/api%2Fv1/health", "/api\\v1\\me", "/api/v1/me/%2e%2e/me"]) {
+      for (const method of ["GET", "POST"]) {
+        const res = await call(p, method);
+        expect(res.status, `${method} ${p}`).toBe(401);
+        expect(res.headers.get("x-middleware-next"), p).toBeNull();
+      }
+      expect((await call(p, "GET", passwordOnlyCookie)).status, `${p} (password only)`).toBe(403);
+    }
+  });
+
+  it("a path that fails to decode is a 400 in the API's error shape, with the security headers, on every path", async () => {
+    for (const p of ["/api/v1/%", "/api/v1/%zz", "/api/v1/me%", "/api/v1/%E0%A4%A", "/api/v1/%c0%af", "/%", "/sign-in%", "/_next/static/%zz", "/api/auth/%"]) {
+      const res = await call(p, "GET");
+      expect(res.status, p).toBe(400);
+      expect(await res.json(), p).toEqual({ error: { code: "bad_request", message: expect.any(String) } });
+      expect(res.headers.get("x-content-type-options"), p).toBe("nosniff");
+      expect(res.headers.get("x-request-id"), p).toBeTruthy();
+    }
+  });
+
   it("/health passes through without a session (the proxy lets the route answer)", async () => {
     const res = await call("/api/v1/health", "GET");
     expect(res.headers.get("x-middleware-next")).toBe("1");
