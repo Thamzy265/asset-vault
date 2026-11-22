@@ -10,7 +10,7 @@ import { migrateUp } from "../src/migrate.ts";
 import type { Database } from "../src/schema.ts";
 import { TestBrowser } from "./support/auth-client.ts";
 import { freshDatabase, type FreshDatabase } from "./support/fresh-database.ts";
-import { secretFromUri, totpCode } from "./support/totp.ts";
+import { forgetUsedCodes, secretFromUri, totpCode } from "./support/totp.ts";
 
 // Independent tester round for M1.3 (sign-in with mandatory 2FA): abuse cases and edge cases
 // from docs/design/m1-3-sign-in.md ("Trust boundaries and abuse cases", "Failure plan") against
@@ -87,6 +87,7 @@ async function passwordOnlyUser() {
 async function signInFully(person: Person, service: AuthService = auth, headers: Record<string, string> = {}): Promise<TestBrowser> {
   const b = browser(service, headers);
   expect((await b.post("/api/auth/sign-in", { email: person.email, password: PASSWORD })).status).toBe(200);
+  await forgetUsedCodes(migrator); // a code works once; this helper signs the same person in again and again
   const res = await b.post("/api/auth/two-factor/totp", { code: totpCode(person.secret, Date.now(), 1) });
   expect(res.status, JSON.stringify(res.body)).toBe(200);
   return b;
@@ -540,7 +541,7 @@ describe("two-step codes", () => {
     }
   });
 
-  it("BUG: a code that was already used is refused the second time within its 30-second step (RFC 6238 section 5.2)", async () => {
+  it("a code that was already used is refused the second time within its 30-second step (RFC 6238 section 5.2)", async () => {
     const person = await enrolledUser();
     // Use a step that is not the one setup/confirm just consumed (+1 is in the future, so it stays valid for 1-2 steps).
     const code = totpCode(person.secret, Date.now(), 1);
@@ -554,7 +555,7 @@ describe("two-step codes", () => {
     expect((await auth.session(replay.headers())).status).toBe("signed-out");
   });
 
-  it("BUG: the code that confirmed enrolment cannot be used again to sign in within its step", async () => {
+  it("the code that confirmed enrolment cannot be used again to sign in within its step", async () => {
     const address = email();
     const created = await createLogin(app, { email: address, name: "Replay", role: "member" });
     const b = browser();
@@ -566,6 +567,34 @@ describe("two-step codes", () => {
     await next.post("/api/auth/sign-in", { email: address, password: PASSWORD });
     const res = await next.post("/api/auth/two-factor/totp", { code });
     expect(res.status).toBe(401);
+  });
+
+  it("two sign-ins racing with one code: exactly one gets a session; a refused wrong code does not use up the right one", async () => {
+    const person = await enrolledUser();
+    const code = totpCode(person.secret, Date.now(), 1);
+    const [a, b] = [browser(), browser()];
+    await a.post("/api/auth/sign-in", { email: person.email, password: PASSWORD });
+    await b.post("/api/auth/sign-in", { email: person.email, password: PASSWORD });
+    const results = await Promise.all([a.post("/api/auth/two-factor/totp", { code }), b.post("/api/auth/two-factor/totp", { code })]);
+    expect(results.map((r) => r.status).sort()).toEqual([200, 401]);
+
+    const other = await enrolledUser();
+    const c = browser();
+    await c.post("/api/auth/sign-in", { email: other.email, password: PASSWORD });
+    expect((await c.post("/api/auth/two-factor/totp", { code: wrongCodeFor(other.secret) })).status).toBe(401);
+    expect((await c.post("/api/auth/two-factor/totp", { code: totpCode(other.secret, Date.now(), 1) })).status).toBe(200);
+  });
+
+  it("a replayed code counts as a wrong code toward the 5 tries of a challenge", async () => {
+    const person = await enrolledUser();
+    const first = browser();
+    await first.post("/api/auth/sign-in", { email: person.email, password: PASSWORD });
+    const code = totpCode(person.secret, Date.now(), 1);
+    expect((await first.post("/api/auth/two-factor/totp", { code })).status).toBe(200);
+    const replay = browser();
+    await replay.post("/api/auth/sign-in", { email: person.email, password: PASSWORD });
+    for (let i = 0; i < 4; i++) expect(errCode(await replay.post("/api/auth/two-factor/totp", { code })), `try ${i + 1}`).toBe("invalid_code");
+    expect(errCode(await replay.post("/api/auth/two-factor/totp", { code }))).toBe("sign_in_again");
   });
 
   it("odd code values are 401 or 400, never a 500 or a session: full-width digits, letters, spaces, newlines, long, empty", async () => {
@@ -653,6 +682,7 @@ describe("two-step codes", () => {
     await migrator.updateTable("auth_two_factors").set({ locked_until: new Date(Date.now() - 1000) }).where("user_id", "=", person.userId).execute();
     const after = browser();
     await after.post("/api/auth/sign-in", { email: person.email, password: PASSWORD });
+    await forgetUsedCodes(migrator);
     expect((await after.post("/api/auth/two-factor/totp", { code: totpCode(person.secret, Date.now(), -1) })).status).toBe(200);
     const row = await migrator.selectFrom("auth_two_factors").select(["failed_verification_count", "locked_until"]).where("user_id", "=", person.userId).executeTakeFirstOrThrow();
     expect(Number(row.failed_verification_count)).toBe(0);

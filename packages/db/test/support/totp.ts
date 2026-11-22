@@ -1,4 +1,6 @@
 import { createHmac } from "node:crypto";
+import type { Kysely } from "kysely";
+import type { Database } from "../../src/schema.ts";
 
 /**
  * RFC 6238 TOTP (SHA-1, 6 digits, 30 s), for tests that play the authenticator
@@ -40,4 +42,13 @@ function base32Decode(input: string): Buffer {
     }
   }
   return Buffer.from(out);
+}
+
+/**
+ * A TOTP code works once (RFC 6238 section 5.2), so a test that signs the same person in
+ * several times needs the service to forget the codes it has seen. Test-only, through the
+ * migrator connection; the replay tests do not call this.
+ */
+export async function forgetUsedCodes(admin: Kysely<Database>): Promise<void> {
+  await admin.deleteFrom("auth_verifications").where("identifier", "like", "totp-used:%").execute();
 }

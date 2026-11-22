@@ -190,7 +190,7 @@ describe("daily sign-in", () => {
     expect(step1.body).toEqual({ next: "code" });
     // Password alone gives no session.
     expect((await auth.session(b.headers())).status).toBe("signed-out");
-    const step2 = await b.post("/api/auth/two-factor/totp", { code: totpCode(user.secret) });
+    const step2 = await b.post("/api/auth/two-factor/totp", { code: totpCode(user.secret, Date.now(), 1) });
     expect(step2.status).toBe(200);
     expect(step2.body).toEqual({ next: "home" });
     expect((await auth.session(b.headers())).status).toBe("signed-in");
@@ -209,7 +209,7 @@ describe("daily sign-in", () => {
     const v4 = browser(authWithIp, { "cf-connecting-ip": "203.0.113.77", "x-forwarded-for": "198.51.100.1" });
     await v4.post("/api/auth/sign-in", { email: user.email, password: "wrong password here" });
     await v4.post("/api/auth/sign-in", { email: user.email, password: PASSWORD });
-    await v4.post("/api/auth/two-factor/totp", { code: totpCode(user.secret) });
+    await v4.post("/api/auth/two-factor/totp", { code: totpCode(user.secret, Date.now(), 1) });
     const v6 = browser(authWithIp, { "cf-connecting-ip": "2001:db8:abcd:12::1" });
     await v6.post("/api/auth/sign-in", { email: user.email, password: "wrong password here" });
     const rows = await auditFor(user.userId);
@@ -389,7 +389,7 @@ describe("sessions", () => {
     const user = await enrolledUser();
     const second = browser();
     await second.post("/api/auth/sign-in", { email: user.email, password: PASSWORD });
-    await second.post("/api/auth/two-factor/totp", { code: totpCode(user.secret) });
+    await second.post("/api/auth/two-factor/totp", { code: totpCode(user.secret, Date.now(), 1) });
     expect((await auth.session(second.headers())).status).toBe("signed-in");
     expect((await user.browser.post("/api/auth/sign-out-everywhere")).status).toBe(200);
     expect((await auth.session(second.headers())).status).toBe("signed-out");
@@ -400,7 +400,7 @@ describe("sessions", () => {
     const user = await enrolledUser();
     const b = browser();
     await b.post("/api/auth/sign-in", { email: user.email, password: PASSWORD });
-    const res = await b.post("/api/auth/two-factor/totp", { code: totpCode(user.secret) });
+    const res = await b.post("/api/auth/two-factor/totp", { code: totpCode(user.secret, Date.now(), 1) });
     const cookie = res.response.headers.getSetCookie().find((c) => c.includes("session_token="))!;
     expect(cookie).toMatch(/HttpOnly/i);
     expect(cookie).toMatch(/Secure/i);

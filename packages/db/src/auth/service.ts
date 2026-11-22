@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { betterAuth } from "better-auth";
-import type { Kysely } from "kysely";
+import { sql, type Kysely } from "kysely";
 import { z } from "zod";
 import { defaultRepositoryLog, type LogFn } from "../access.ts";
 import { kyselyOf, type DbLike } from "../handle.ts";
@@ -181,6 +181,29 @@ export function createAuthService(handle: DbLike, config: AuthConfig, options: A
     return `${await cookieName("two_factor")}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax`;
   }
 
+  /**
+   * A TOTP code is single use (RFC 6238 section 5.2; lead decision 4). The library accepts a code
+   * for 3 steps (90 s), so a code that was accepted once is remembered for 3 minutes as a keyed
+   * hash in auth_verifications (swept by the worker like any expired challenge). The claim is made
+   * before the library checks the code, under a per-code lock, so two requests racing with one
+   * code cannot both pass; a code that turns out wrong gives its claim back.
+   */
+  const totpMarker = (userId: string, code: string) =>
+    `totp-used:${userId}:${createHmac("sha256", config.encryptionKey).update(`totp-code:${code}`).digest("base64url")}`;
+
+  async function claimTotp(marker: string): Promise<boolean> {
+    return db.transaction().execute(async (trx) => {
+      await sql`select pg_advisory_xact_lock(hashtextextended(${marker}, 0))`.execute(trx);
+      await trx.deleteFrom("auth_verifications").where("identifier", "=", marker).where("expires_at", "<=", sql<Date>`now()`).execute();
+      const taken = await trx.selectFrom("auth_verifications").select("id").where("identifier", "=", marker).executeTakeFirst();
+      if (taken) return false;
+      await trx.insertInto("auth_verifications").values({ identifier: marker, value: "used", expires_at: sql<Date>`now() + interval '3 minutes'` }).execute();
+      return true;
+    });
+  }
+
+  const releaseTotp = (marker: string) => db.deleteFrom("auth_verifications").where("identifier", "=", marker).execute();
+
   /** The library's account lock (10 failed codes in a row): reported as the same 429 as the password limit. */
   async function lockedReply(reply: Reply, userId: string | undefined): Promise<Response> {
     const row = userId ? await db.selectFrom("auth_two_factors").select("locked_until").where("user_id", "=", userId).executeTakeFirst() : undefined;
@@ -239,10 +262,15 @@ export function createAuthService(handle: DbLike, config: AuthConfig, options: A
     if (!c) return reply.addCookies([await twoFactorCookieCleared()]).error(401, "sign_in_again");
 
     const code = input.data.code.trim();
+    const totp = code.replace(/\s+/g, "");
+    // A replayed code is counted like any wrong code: the library is handed a value that can never match.
+    const marker = kind === "totp" ? totpMarker(c.userId, totp) : null;
+    const replayed = marker !== null && !(await claimTotp(marker));
     const res =
       kind === "totp"
-        ? await auth.api.verifyTOTP({ body: { code: code.replace(/\s+/g, "") }, headers: request.headers, asResponse: true })
+        ? await auth.api.verifyTOTP({ body: { code: replayed ? "replayed" : totp }, headers: request.headers, asResponse: true })
         : await auth.api.verifyBackupCode({ body: { code: hashBackupCode(config.encryptionKey, code) }, headers: request.headers, asResponse: true });
+    if (marker && !replayed && !res.ok) await releaseTotp(marker);
     reply.addCookies(res);
     if (res.ok) {
       await auditAuthEvent(db, log, kind === "backup" ? "backup_code_used" : "sign_in", c.userId, prefix);
@@ -314,8 +342,12 @@ export function createAuthService(handle: DbLike, config: AuthConfig, options: A
     const userId = current.user.id;
     const prefix = clientIpPrefix(request.headers, config.trustedIpHeader);
 
-    const res = await auth.api.verifyTOTP({ body: { code: input.data.code.replace(/\s+/g, "") }, headers: request.headers, asResponse: true });
-    if (!res.ok) {
+    const totp = input.data.code.replace(/\s+/g, "");
+    const marker = totpMarker(userId, totp);
+    const fresh = await claimTotp(marker);
+    const res = fresh ? await auth.api.verifyTOTP({ body: { code: totp }, headers: request.headers, asResponse: true }) : null;
+    if (!res?.ok) {
+      if (fresh) await releaseTotp(marker);
       await auditAuthEvent(db, log, "2fa_failed", userId, prefix);
       return reply.error(401, "invalid_code");
     }
