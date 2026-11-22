@@ -40,7 +40,7 @@ flowchart LR
 - ≥ 1024 px: same card, centred vertically.
 
 ## Accessibility notes
-- Headings and landmarks: one `h1` per screen ("Sign in", "Enter your code", "Set up your account"); `main` landmark; setup steps announce "Step 2 of 4".
+- Headings and landmarks: one `h1` per screen ("Sign in", "Enter your code", "Use a backup code", "Set up your account", "This link has expired"); `main` landmark; setup steps announce "Step N of 3" (three steps, as in Copy).
 - Focus order: top to bottom; on error, focus moves to the error summary, which links to the fields; nothing covers the focused element (no sticky footers).
 - Accessible names: every field has a visible `label`; the show/hide toggle has `aria-pressed` and label "Show password".
 - Errors: `aria-describedby` from field to its error text; error summary uses `role="alert"`.
@@ -56,6 +56,23 @@ flowchart LR
 - Errors: as in the states matrix — every one says how to recover.
 - Sign out: "Sign out", "Sign out of all devices"; confirmation "You're signed out."
 - No "Create account" link anywhere.
+
+### Added 2026-11-21 (developer questions during build; lead decisions)
+- Code screen: field label "6-digit code".
+- Backup code screen: h1 "Use a backup code"; help "Enter one of the backup codes you saved when you set up your account. Each code works once."; field label "Backup code"; button "Verify"; link "Use your authenticator app instead" (back to the code screen).
+- Setup step 1: labels "New password" and "Confirm new password"; rule text under the first field "At least 12 characters"; show/hide toggle label "Show password"; button "Continue".
+- Setup step 2: help above the QR code "Open your authenticator app (for example Google Authenticator, Microsoft Authenticator or 1Password), add an account and scan this code. If you can't scan it, enter the key below instead."; key label "Key"; button "Copy key"; field label "6-digit code"; button "Verify and continue".
+- Setup step 3: buttons "Copy all" and "Download as text" (file name `family-asset-vault-backup-codes.txt`); checkbox "I've saved these codes"; button "Continue".
+- Copy confirmation: after "Copy key" or "Copy all", the button text changes to "Copied" for 3 seconds and a polite live region announces "Copied to clipboard". If copying fails: "Couldn't copy. Select the text and copy it yourself."
+- Error summary: heading "There is a problem", followed by a list of links to each field's error; focus moves to the heading.
+- Expired or used setup link: h1 "This link has expired"; text "This setup link has expired or was already used. Ask your admin for a new one."; no buttons or links (there is no public sign-up).
+- Backup codes left: after signing in with a backup code, the home page shows a notice under the h1: "You have N backup codes left. When you run low, ask your admin to reset your two-step sign-in." (N = 1: "You have 1 backup code left."). With 0 left: "You have no backup codes left. Ask your admin to reset your two-step sign-in."
+- Password-only session (2FA not yet passed, e.g. the page was reloaded mid-sign-in): send the person to the sign-in screen with "Please sign in again."
+- Setup not finished (changed 2026-11-22, lead decision 5): signing in with the password alone does **not** resume setup. The sign-in screen shows "Your account setup isn't finished. Open your setup link again, or ask your admin for a new one." The setup link stays valid until the authenticator step is confirmed (24 h from issue); opening it again resumes at step 2 with the password kept.
+- Setup password fields: no `maxLength` that silently cuts a pasted password. A password over the limit shows "Use no more than 128 characters" (128 code points, our rule; the auth library's own limit is raised so it never refuses a password our rule accepts) — never "Use at least 12 characters".
+- Sign out fails (network or server error): stay on the page and show "We couldn't sign you out. Check your connection and try again." Never go to the sign-in screen while the session is still alive.
+- Setup link check fails because of the connection: keep the link usable — show the offline banner with a "Try again" button; the token leaves the address bar only after the check succeeds.
+- Rate-limit message: "Too many tries. Try again in 1 minute." / "… in N minutes." (singular for 1, rounded up to whole minutes).
 
 ## Tokens used
 Semantic tokens defined once in `apps/web` as CSS variables, light + dark: `color.bg`, `color.surface`, `color.text`, `color.text.muted`, `color.border`, `color.accent`, `color.text.danger`, `color.bg.danger`, `color.focus`, `space.1–6`, `radius.2`, `font.body`, `font.mono`. No hard-coded colours in components.

@@ -37,12 +37,13 @@ Acceptance criteria are drafted for M1 now; later milestones get theirs (and the
 - [x] **M1.2 Data model foundation** — people, users, roles, visibility, audit log; reversible migrations.
   - AC: every business table (records the family owns, e.g. people) has `owner`, `visibility` and timestamps; system tables (users, audit_log, _meta) have timestamps; migrations go up and down cleanly.
   - AC: every read/write goes through one server-side visibility check (tested).
-- [ ] **M1.3 Sign-in with mandatory 2FA** — two family accounts, admin and member roles.
+- [x] **M1.3 Sign-in with mandatory 2FA** — two family accounts, admin and member roles.
   - AC: no page or API returns data without a signed-in user with 2FA enrolled.
   - AC: sign-in, sign-out, failed sign-in and 2FA enrolment are written to the audit log.
 - [ ] **M1.4 Remote access** — Cloudflare Tunnel + Access for the app; Tailscale-only for admin.
   - AC: from outside the home network, only the web app is reachable, and only after Access sign-in.
   - AC: Proxmox, database and server admin are unreachable through the tunnel.
+  - AC: `AUTH_TRUSTED_IP_HEADER=cf-connecting-ip` is set and only Cloudflare can reach the app, so sign-in rate limits are per client, not shared (from M1.3).
 - [ ] **M1.5 Backups and restore test** — nightly encrypted backup of DB + files; monthly automated restore test. *(needs the D11 name)*
   - AC: a restore into a throwaway container passes a data check; failure raises an alert.
   - AC: the backup key is not stored only on the server.
@@ -106,4 +107,7 @@ Acceptance criteria are drafted for M1 now; later milestones get theirs (and the
 - Pagination for the people list — returns every visible person — trigger: > 200 rows in people — noted 2026-11-21 by developer
 - Scripted upgrade of a database volume created before the M1.2 roles (create vault_migrator/vault_app, hand tables to vault_migrator, recreate the pgboss schema) — no volume holds real data yet, so README says to recreate it — trigger: people rows > 0 on any volume created before migration 0004 — noted 2026-11-21 by developer
 - Index on audit_log(at) — retention scans by time — trigger: a retention run takes > 1 s or audit_log > 1,000,000 rows — noted 2026-11-21 by reviewer
+- Dedicated least-privilege database role for `pnpm user:*` commands — today they run with vault_app's full rights, more than they need; acceptable while the CLI is Tailscale-only and there are 2 users — trigger: a third user is added — noted 2026-11-21 by developer
+- One shared database pool per web process instead of one per Next bundle — three small pools are fine for < 10 users — trigger: Postgres connections from web > 30, or p95 > 500 ms on /api/v1/me — noted 2026-11-21 by developer
+- Audit refused sign-in attempts (429) as a summarised row — today only the failures before a lockout are audited, and auditing every refusal would let anyone fill the log — trigger: M1.6 alerts land, or a lockout the PM can't explain — noted 2026-11-22 by lead
 
