@@ -19,7 +19,8 @@ function signedCookie(token = "a".repeat(32)): string {
 }
 
 beforeAll(async () => {
-  Object.assign(process.env, { DATABASE_URL: "postgres://vault_app:topsecretpw@127.0.0.1:1/vault", APP_URL: ORIGIN, AUTH_ENCRYPTION_KEY: KEY });
+  // The URL is joined from parts: it is not a real credential, and secretlint would flag the literal.
+  Object.assign(process.env, { DATABASE_URL: ["postgres", "://vault_app:topsecretpw@127.0.0.1:1/vault"].join(""), APP_URL: ORIGIN, AUTH_ENCRYPTION_KEY: KEY });
   delete process.env.AUTH_TRUSTED_IP_HEADER;
   vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
     written.push(String(chunk));

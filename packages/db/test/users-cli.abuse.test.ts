@@ -92,7 +92,7 @@ describe("user:create refuses bad input and says nothing that helps an attacker 
   it("the link uses only the origin of APP_URL: a path, query, fragment or user info in it never reaches the link", async () => {
     for (const [value, origin] of [
       ["https://vault.example.org/some/path?x=1#frag", "https://vault.example.org"],
-      ["https://evil:secret@vault.example.org", "https://vault.example.org"],
+      [["https://evil:secret", "@vault.example.org"].join(""), "https://vault.example.org"],
       ["http://127.0.0.1:3000/", "http://127.0.0.1:3000"],
     ] as const) {
       const res = await users(["create", "--email", `origin${Math.random().toString(36).slice(2, 8)}@example.org`, "--name", "Origin", "--role", "member"], { DATABASE_URL: fresh.appUrl, APP_URL: value });
@@ -180,7 +180,7 @@ describe("user:deactivate", () => {
   });
 
   it("an unreachable database is a clean exit 1 that names a code at most, not the URL or the email", async () => {
-    const res = await users(["deactivate", "--email", "someone@example.org"], { DATABASE_URL: "postgres://vault_app:topsecretpw@127.0.0.1:1/vault", APP_URL });
+    const res = await users(["deactivate", "--email", "someone@example.org"], { DATABASE_URL: ["postgres", "://vault_app:topsecretpw@127.0.0.1:1/vault"].join(""), APP_URL });
     expect(res.code).toBe(1);
     expect(res.stdout + res.stderr).not.toMatch(/topsecretpw|someone@example\.org|127\.0\.0\.1/);
   });

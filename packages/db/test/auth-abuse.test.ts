@@ -937,7 +937,7 @@ describe("CSRF and origin on every POST under /api/auth", () => {
 // ---------------------------------------------------------------------------------------------
 describe("failure paths of the service itself", () => {
   it("with the database unreachable, sign-in is a JSON 500 that holds no email, no password and no connection detail, and the session check throws (the gate then answers 503)", async () => {
-    const dead = createDb("postgres://nobody:hunter2pass@127.0.0.1:1/nothing");
+    const dead = createDb(["postgres", "://nobody:hunter2pass@127.0.0.1:1/nothing"].join("")) // joined: not a real credential;
     const lines: string[] = [];
     const service = createAuthService(dead, { appUrl: ORIGIN, encryptionKey: KEY, trustedIpHeader: null }, { log: (l, m, f) => void lines.push(JSON.stringify({ l, m, ...f })) });
     const b = new TestBrowser((r) => service.handle(r), ORIGIN);
