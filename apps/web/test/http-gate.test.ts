@@ -1,7 +1,8 @@
 import http from "node:http";
+import net from "node:net";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { guardRequests, installRequestGuard, SUPPORTED_METHODS } from "../http-gate.mjs";
+import { guardRequests, installRequestGuard, selfCheck, SUPPORTED_METHODS } from "../http-gate.mjs";
 
 // M1.3 T7, T8: methods the app doesn't use are answered 405 in front of the Next runtime (which throws
 // on TRACE and friends before the proxy runs), on every path, with no stack trace logged; /_next/image is a
@@ -70,6 +71,36 @@ describe("the method gate in front of Next", () => {
     expect(reached).toEqual([]);
   });
 
+  // Reviewer S4: other spellings of the same target. Sent on a raw socket, as a client would, so nothing normalises them first.
+  function raw(requestLine: string): Promise<{ status: number; body: string }> {
+    return new Promise((resolve, reject) => {
+      const socket = net.connect(port, "127.0.0.1", () => socket.write(`${requestLine}\r\nHost: x\r\nConnection: close\r\n\r\n`));
+      let out = "";
+      socket.on("data", (d) => (out += d));
+      socket.on("end", () => resolve({ status: Number(/^HTTP\/1\.1 (\d{3})/.exec(out)?.[1]), body: out.split("\r\n\r\n")[1] ?? "" }));
+      socket.on("error", reject);
+    });
+  }
+
+  it.each(["//_next/image?url=%2F&w=64&q=75", "///_next/image", "//_next/image/", "/_next/%69mage?url=%2F", "/%5Fnext/image?url=%2F", "/_next/image%00", "\\_next\\image"])("the optimizer spelled %s never reaches Next", async (path) => {
+    reached.length = 0;
+    const res = await raw(`GET ${path} HTTP/1.1`);
+    expect([400, 404], path).toContain(res.status);
+    expect(reached).toEqual([]);
+  });
+
+  it.each(["GET http://x/_next/image?url=%2F HTTP/1.1", "GET http://x/ HTTP/1.1", "GET https://x/api/v1/me HTTP/1.1", "POST http://x/api/auth/sign-in HTTP/1.1", "OPTIONS * HTTP/1.1"])("a non-origin-form target (%s) is a 400 and never reaches Next", async (line) => {
+    reached.length = 0;
+    const res = await raw(line);
+    expect(res.status, line).toBe(400);
+    expect(JSON.parse(res.body)).toEqual({ error: { code: "bad_request", message: expect.any(String) } });
+    expect(reached).toEqual([]);
+  });
+
+  it("an absolute-form TRACE is still a 405 (the method is checked first)", async () => {
+    expect((await raw("TRACE http://x/ HTTP/1.1")).status).toBe(405);
+  });
+
   it("other /_next paths go through", async () => {
     reached.length = 0;
     expect((await send("GET", "/_next/static/chunk.js")).status).toBe(200);
@@ -84,6 +115,13 @@ describe("the method gate in front of Next", () => {
     const line = JSON.parse(logged[0]!) as Record<string, unknown>;
     expect(line).toMatchObject({ level: "info", msg: "request refused", status: 405 });
     expect(logged[0]).not.toMatch(/TRACE|secret-looking|token=|\bat \w+ \(|stack/i);
+  });
+
+  it("the start-up self-check passes on a patched http module and throws on one that is not patched", async () => {
+    const patched = { createServer: http.createServer };
+    installRequestGuard(patched);
+    await expect(selfCheck(patched)).resolves.toBeUndefined();
+    await expect(selfCheck({ createServer: http.createServer })).rejects.toThrow(/request guard/i);
   });
 
   it("installRequestGuard guards every server later created with http.createServer(listener)", async () => {
