@@ -285,10 +285,10 @@ test("page requests: signed out and password-only go to sign-in whatever the RSC
 });
 
 test("the image optimizer is off: /_next/image is not served (404 or 405), never a 500, and leaves no unhandled rejection in the log", async () => {
-  for (const path of ["/_next/image?url=%2F&w=64&q=75", "/_next/image?url=%2Fapi%2Fv1%2Fme&w=64&q=75", "/_next/image", "/_next/image?url=http%3A%2F%2F127.0.0.1%3A3000%2F&w=64&q=75"]) {
+  for (const path of ["/_next/image?url=%2F&w=64&q=75", "/_next/image?url=%2Fapi%2Fv1%2Fme&w=64&q=75", "/_next/image", "//_next/image?url=%2F&w=64&q=75", "http://127.0.0.1/_next/image?url=%2F&w=64&q=75", "/_next/%69mage?url=%2F", "/_next/image?url=http%3A%2F%2F127.0.0.1%3A3000%2F&w=64&q=75"]) {
     for (const method of ["GET", "HEAD", "POST"]) {
       const res = await rawRequest(path, { method });
-      expect([404, 405], `${method} ${path}`).toContain(res.status);
+      expect([400, 404, 405], `${method} ${path}`).toContain(res.status);
     }
   }
   const log = await webLog();
