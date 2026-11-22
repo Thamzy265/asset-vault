@@ -20,10 +20,22 @@ async function noSidewaysScroll(page: Page, screen: string) {
   expect(scroll, `${screen}: no sideways scrolling`).toBeLessThanOrEqual(client);
 }
 
+/**
+ * A code this account has not used yet. A code works once, so each sign-in takes a different step
+ * (the one ahead, the one behind, the current one); `spent` holds the codes already used, with the one
+ * setup confirmed. Time moves on during a long test, so the choice is made when the code is needed.
+ */
+function freshCode(key: string, spent: Set<string>): string {
+  const code = [1, -1, 0].map((offset) => totpCode(key, Date.now(), offset)).find((c) => !spent.has(c));
+  if (!code) throw new Error("no unused code left in this window");
+  spent.add(code);
+  return code;
+}
+
 /** Different from the current code, so it is always wrong. */
 const wrongCode = (secret: string) => (totpCode(secret) === "000000" ? "111111" : "000000");
 
-/** Follows a setup link through steps 1-3 to home. Returns the key and the backup codes. */
+/** Follows a setup link through steps 1-3 to home. Returns the key, the backup codes and the codes used so far. */
 async function setUp(page: Page, setupPath: string, checks: (screen: string) => Promise<void> = async () => {}) {
   await page.goto(setupPath);
   await expect(page.getByRole("heading", { level: 2, name: "Step 1 of 3: Choose a password" })).toBeVisible();
@@ -37,7 +49,8 @@ async function setUp(page: Page, setupPath: string, checks: (screen: string) => 
   await expect(page.getByRole("img", { name: "QR code for your authenticator app" })).toBeVisible();
   await checks("setup: authenticator");
   const key = (await page.locator("#setup-key").textContent())!.trim();
-  await page.getByLabel("6-digit code").fill(totpCode(key));
+  const spent = new Set<string>();
+  await page.getByLabel("6-digit code").fill(freshCode(key, spent));
   await page.getByRole("button", { name: "Verify and continue" }).click();
 
   await expect(page.getByRole("heading", { level: 2, name: "Step 3 of 3: Save your backup codes" })).toBeVisible();
@@ -49,7 +62,7 @@ async function setUp(page: Page, setupPath: string, checks: (screen: string) => 
   await page.getByLabel("I've saved these codes").check();
   await proceed.click();
   await expect(page.getByRole("heading", { level: 1, name: /^Welcome, / })).toBeVisible();
-  return { key, codes };
+  return { key, codes, spent };
 }
 
 async function signIn(page: Page, email: string, password = PASSWORD) {
@@ -133,7 +146,7 @@ test("a used, made-up or missing setup link shows the expired screen, with no si
 
 test("daily sign-in with a code, sign out, then a backup code with the codes-left notice, then sign out of all devices", async ({ page, browser }) => {
   const { email, setupPath } = await newLogin("Bea Example");
-  const { key, codes } = await setUp(page, setupPath);
+  const { key, codes, spent } = await setUp(page, setupPath);
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page).toHaveURL(/\/sign-in\?reason=signed-out$/);
   await expect(page.getByText("You're signed out.")).toBeVisible();
@@ -147,7 +160,7 @@ test("daily sign-in with a code, sign out, then a backup code with the codes-lef
   await expect(code).toHaveAttribute("inputmode", "numeric");
   await expect(code).toHaveAttribute("autocomplete", "one-time-code");
   await axe(page, "code");
-  await code.fill(totpCode(key, Date.now(), 1)); // the current step was used by setup (a code works once)
+  await code.fill(freshCode(key, spent));
   await page.getByRole("button", { name: "Verify" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Welcome, Bea Example" })).toBeVisible();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
@@ -168,7 +181,7 @@ test("daily sign-in with a code, sign out, then a backup code with the codes-lef
   const other = await browser.newContext();
   const otherPage = await other.newPage();
   await signIn(otherPage, email);
-  await otherPage.getByLabel("6-digit code").fill(totpCode(key, Date.now(), -1)); // the other two steps were used already (a code works once)
+  await otherPage.getByLabel("6-digit code").fill(freshCode(key, spent));
   await otherPage.getByRole("button", { name: "Verify" }).click();
   await expect(otherPage.getByRole("heading", { level: 1, name: "Welcome, Bea Example" })).toBeVisible();
   await page.getByRole("button", { name: "Sign out of all devices" }).click();
@@ -264,7 +277,7 @@ test("offline: the banner appears and nothing is lost", async ({ page, context }
 
 test("keyboard only, and pasting a code works (WCAG 3.3.8)", async ({ page, context }) => {
   const { email, setupPath } = await newLogin();
-  const { key } = await setUp(page, setupPath);
+  const { key, spent } = await setUp(page, setupPath);
   await page.context().clearCookies();
   await page.goto("/sign-in");
   await page.keyboard.press("Tab");
@@ -278,7 +291,7 @@ test("keyboard only, and pasting a code works (WCAG 3.3.8)", async ({ page, cont
   await page.keyboard.press("Enter");
   await expect(page.getByRole("heading", { level: 1, name: "Enter your code" })).toBeFocused();
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await page.evaluate((c) => navigator.clipboard.writeText(c), totpCode(key, Date.now(), 1)); // the current step was used by setup (a code works once)
+  await page.evaluate((c) => navigator.clipboard.writeText(c), freshCode(key, spent));
   await page.keyboard.press("Tab");
   await expect(page.getByLabel("6-digit code")).toBeFocused();
   await page.keyboard.press("ControlOrMeta+V");
