@@ -400,6 +400,38 @@ test("when 'Sign out of all devices' fails (403) the person is told; the other d
   await expect(page.getByRole("alert").filter({ hasText: "We couldn't sign you out. Check your connection and try again." }), "the person is told the sign-out failed").toBeVisible();
 });
 
+test("when 'Sign out of all devices' gets a 500 (the session can't be checked) the person is told and stays; the other devices are still signed in", async ({ page }) => {
+  const account = await enrolledAccount("Server Hiccup");
+  const other = await signInClient(account);
+  await browserSession(page, account);
+  await page.goto("/");
+  await expect(page.getByRole("heading", { level: 1, name: "Welcome, Server Hiccup" })).toBeVisible();
+  await page.route("**/api/auth/sign-out-everywhere", (r) => r.fulfill({ status: 500, contentType: "application/json", body: '{"error":{"code":"internal_error","message":"x"}}' }));
+  await page.getByRole("button", { name: "Sign out of all devices" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "We couldn't sign you out. Check your connection and try again." })).toBeVisible();
+  await expect(page).toHaveURL(`${BASE}/`);
+  expect(await page.getByText("You're signed out.").count()).toBe(0);
+  expect((await other.get("/api/v1/me")).status).toBe(200);
+});
+
+test("a 500 on the code step is the generic error, never 'That code is not right'", async ({ page }) => {
+  const account = await enrolledAccount("Code Hiccup");
+  await uiSignIn(page, account.email);
+  await expect(page.getByRole("heading", { level: 1, name: "Enter your code" })).toBeVisible();
+  await page.route("**/api/auth/two-factor/totp", (r) => r.fulfill({ status: 500, contentType: "application/json", body: '{"error":{"code":"internal_error","message":"x"}}' }));
+  await page.getByLabel("6-digit code").fill(totpCode(account.key, Date.now(), 1));
+  await page.getByRole("button", { name: "Verify" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Something went wrong. Reload the page." })).toBeVisible();
+  expect(await page.getByText(/That code is not right/).count()).toBe(0);
+  await page.unroute("**/api/auth/two-factor/totp");
+  await page.getByRole("button", { name: "Use a backup code" }).click();
+  await page.route("**/api/auth/two-factor/backup-code", (r) => r.fulfill({ status: 500, contentType: "application/json", body: '{"error":{"code":"internal_error","message":"x"}}' }));
+  await page.getByLabel("Backup code").fill("aaaaa-bbbbb");
+  await page.getByRole("button", { name: "Verify" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Something went wrong. Reload the page." })).toBeVisible();
+  expect(await page.getByText(/not right or was already used/).count()).toBe(0);
+});
+
 test("after signing out, the Back button does not show the signed-in page again", async ({ page }) => {
   const account = await enrolledAccount("Back Button");
   await browserSession(page, account);

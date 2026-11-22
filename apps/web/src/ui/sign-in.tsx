@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { errorCodeOf, OfflineError, postJson, retryText, type ApiResult } from "./api.ts";
+import { errorCodeOf, errorMessageOf, OfflineError, postJson, type ApiResult } from "./api.ts";
 import { COPY } from "./copy.ts";
 import { Banner, ErrorSummary, Field, OfflineBanner, type FieldError } from "./parts.tsx";
 
@@ -83,7 +83,7 @@ function CredentialsForm({ onNext, onMessage }: { onNext: (step: Step) => void; 
     }
     setBusy(false);
     if (result.status === 200 && result.body.next === "code") return onNext({ name: "code" });
-    if (result.status === 429) return onMessage({ kind: "error", text: retryText(result) });
+    if (result.status === 429) return onMessage({ kind: "error", text: errorMessageOf(result) ?? COPY.errors.generic });
     if (result.status === 403 && errorCodeOf(result) === "setup_unfinished") return onMessage({ kind: "error", text: COPY.errors.setupUnfinished });
     if (result.status === 401 || result.status === 400) return onMessage({ kind: "error", text: COPY.errors.credentials });
     onMessage({ kind: "error", text: COPY.errors.generic });
@@ -159,8 +159,11 @@ function CodeForm({
       window.location.assign("/");
       return;
     }
-    if (result.status === 429) return onMessage({ kind: "error", text: retryText(result) });
+    if (result.status === 429) return onMessage({ kind: "error", text: errorMessageOf(result) ?? COPY.errors.generic });
     if (errorCodeOf(result) === "sign_in_again") return onSignInAgain();
+    // The wrong-code text only for a code the server judged wrong; a 500 or anything else is the generic error (reviewer C1).
+    const wrong = result.status === 401 && errorCodeOf(result) === (kind === "totp" ? "invalid_code" : "invalid_backup_code");
+    if (!wrong) return onMessage({ kind: "error", text: COPY.errors.generic });
     onMessage(null);
     setErrors([{ field: id, message: kind === "totp" ? COPY.errors.wrongCode : COPY.errors.wrongBackup }]);
   }
